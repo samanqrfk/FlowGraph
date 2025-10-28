@@ -266,6 +266,124 @@ protected:
 	void AddCustomOutput(const FName& EventName);
 	void RemoveCustomOutput(const FName& EventName);
 #endif
+
+//////////////////////////////////////////////////////////////////////////
+// Runtime Graph Generation
+// API for creating and modifying FlowGraphs at runtime without editor dependencies
+
+public:
+	/** 
+	 * Create a new FlowNode at runtime without requiring UEdGraphNode
+	 * @param NodeClass The class of the node to create
+	 * @param NodeGuid Optional GUID for the node (auto-generated if not provided)
+	 * @return The created node, or nullptr if creation failed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Runtime")
+	UFlowNode* CreateNodeAtRuntime(TSubclassOf<UFlowNode> NodeClass, FGuid NodeGuid = FGuid());
+	
+	/**
+	 * Connect two nodes at runtime
+	 * @param SourceNodeGuid GUID of the source node
+	 * @param OutputPinName Name of the output pin on the source node
+	 * @param TargetNodeGuid GUID of the target node
+	 * @param InputPinName Name of the input pin on the target node
+	 * @return true if connection was successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Runtime")
+	bool ConnectNodesAtRuntime(FGuid SourceNodeGuid, FName OutputPinName, FGuid TargetNodeGuid, FName InputPinName);
+	
+	/**
+	 * Remove a node from the graph at runtime
+	 * @param NodeGuid GUID of the node to remove
+	 * @return true if node was removed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Runtime")
+	bool RemoveNodeAtRuntime(FGuid NodeGuid);
+	
+	/**
+	 * Disconnect an output pin from its target at runtime
+	 * @param SourceNodeGuid GUID of the source node
+	 * @param OutputPinName Name of the output pin to disconnect
+	 * @return true if disconnection was successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Runtime")
+	bool DisconnectPinAtRuntime(FGuid SourceNodeGuid, FName OutputPinName);
+	
+	/**
+	 * Check if this is a runtime-generated flow asset (has no editor graph)
+	 */
+	UFUNCTION(BlueprintPure, Category = "FlowAsset|Runtime")
+	bool IsRuntimeGenerated() const { return bIsRuntimeGenerated; }
+
+	/**
+	 * Serialize runtime-generated graph to JSON string (for saving to file/database)
+	 * @param OutSerializedData String containing the serialized graph data
+	 * @return true if serialization was successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Runtime")
+	bool SerializeRuntimeGraphToJson(FString& OutSerializedData) const;
+	
+	/**
+	 * Deserialize runtime-generated graph from JSON string
+	 * @param SerializedData String containing the serialized graph data
+	 * @return true if deserialization was successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Runtime")
+	bool DeserializeRuntimeGraphFromJson(const FString& SerializedData);
+
+#if WITH_EDITOR
+	/**
+	 * Save runtime-generated graph as a FlowAsset file (Editor only)
+	 * Creates a real .uasset file with visual graph
+	 * @param PackagePath Path where to save the asset (e.g., "/Game/FlowAssets/MyGeneratedFlow")
+	 * @param AssetName Name of the asset
+	 * @return The created FlowAsset, or nullptr if failed
+	 */
+	UFlowAsset* SaveRuntimeGraphAsAsset(const FString& PackagePath, const FString& AssetName);
+
+	/**
+	 * Load a SaveGame file and extract FlowAsset save data (Editor only)
+	 * Use this to inspect saved flows or convert them to editor assets
+	 * @param SaveSlotName Name of the save slot to load (e.g., "MyFlowSave")
+	 * @param UserIndex User index for the save slot (usually 0)
+	 * @param OutSaveData Array that will be filled with save data for each flow
+	 * @return true if SaveGame was loaded successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Editor", meta = (DevelopmentOnly))
+	static bool LoadFlowSaveDataFromFile(const FString& SaveSlotName, int32 UserIndex, TArray<FFlowAssetSaveData>& OutSaveData);
+
+	/**
+	 * Create a FlowAsset from save data (Editor only)
+	 * Reconstructs the flow with nodes and connections from a saved state
+	 * @param SaveData The save data to reconstruct from
+	 * @param PackagePath Path where to save the asset (e.g., "/Game/FlowAssets/Restored")
+	 * @param AssetName Name for the created asset
+	 * @param bCreateEditorGraph If true, creates visual editor graph; if false, runtime-only
+	 * @return The created FlowAsset, or nullptr if failed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Editor", meta = (DevelopmentOnly))
+	static UFlowAsset* CreateFlowAssetFromSaveData(const FFlowAssetSaveData& SaveData, const FString& PackagePath, const FString& AssetName, bool bCreateEditorGraph = true);
+
+	/**
+	 * Helper function: Load and convert a saved flow to an editor asset in one step
+	 * @param SaveSlotName Name of the save slot to load
+	 * @param UserIndex User index for the save slot
+	 * @param FlowIndex Index of the flow in the save file (0 for first flow)
+	 * @param PackagePath Path where to save the asset
+	 * @param AssetName Name for the created asset
+	 * @return The created FlowAsset, or nullptr if failed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Editor", meta = (DevelopmentOnly))
+	static UFlowAsset* LoadFlowAssetFromSaveFile(const FString& SaveSlotName, int32 UserIndex, int32 FlowIndex, const FString& PackagePath, const FString& AssetName);
+#endif
+
+protected:
+	/** Internal method to register a node without editor dependencies */
+	void RegisterNodeAtRuntime(const FGuid& NewGuid, UFlowNode* NewNode);
+
+	/** Flag to indicate this asset was created at runtime */
+	UPROPERTY()
+	bool bIsRuntimeGenerated;
 	
 //////////////////////////////////////////////////////////////////////////
 // Instances of the template asset

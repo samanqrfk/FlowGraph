@@ -3,6 +3,7 @@
 #include "FlowAsset.h"
 
 #include "FlowLogChannels.h"
+#include "FlowSave.h"
 #include "FlowSettings.h"
 #include "FlowSubsystem.h"
 
@@ -15,12 +16,19 @@
 #include "Nodes/Graph/FlowNode_SubGraph.h"
 
 #include "Engine/World.h"
+#include "Misc/Base64.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
 
 #if WITH_EDITOR
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
+#include "Kismet/GameplayStatics.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "UObject/Package.h"
 
 FString UFlowAsset::ValidationError_NodeClassNotAllowed = TEXT("Node class {0} is not allowed in this asset.");
 FString UFlowAsset::ValidationError_NullNodeInstance = TEXT("Node with GUID {0} is NULL");
@@ -37,6 +45,7 @@ UFlowAsset::UFlowAsset(const FObjectInitializer& ObjectInitializer)
 	, AllowedNodeClasses({UFlowNodeBase::StaticClass()})
 	, AllowedInSubgraphNodeClasses({UFlowNode_SubGraph::StaticClass()})
 	, bStartNodePlacedAsGhostNode(false)
+	, bIsRuntimeGenerated(false)
 	, TemplateAsset(nullptr)
 	, FinishPolicy(EFlowFinishPolicy::Keep)
 {
@@ -308,11 +317,15 @@ void UFlowAsset::RegisterNode(const FGuid& NewGuid, UFlowNode* NewNode)
 	NewNode->SetGuid(NewGuid);
 	Nodes.Emplace(NewGuid, NewNode);
 
-	HarvestNodeConnections();
-
-	if (TryUpdateManagedFlowPinsForNode(*NewNode))
+	// Only harvest connections from the editor graph if one exists
+	if (FlowGraph)
 	{
-		(void) NewNode->OnReconstructionRequested.ExecuteIfBound();
+		HarvestNodeConnections();
+
+		if (TryUpdateManagedFlowPinsForNode(*NewNode))
+		{
+			(void) NewNode->OnReconstructionRequested.ExecuteIfBound();
+		}
 	}
 }
 
@@ -323,11 +336,20 @@ void UFlowAsset::UnregisterNode(const FGuid& NodeGuid)
 
 	HarvestNodeConnections();
 
-	MarkPackageDirty();
+	if (!bIsRuntimeGenerated)
+	{
+		MarkPackageDirty();
+	}
 }
 
 void UFlowAsset::HarvestNodeConnections(UFlowNode* TargetNode)
 {
+	// Skip harvesting for runtime-generated flows - they don't have editor graphs
+	if (bIsRuntimeGenerated)
+	{
+		return;
+	}
+
 	TArray<UFlowNode*> TargetNodes;
 
 	if (IsValid(TargetNode))
@@ -430,6 +452,12 @@ void UFlowAsset::HarvestNodeConnections(UFlowNode* TargetNode)
 
 bool UFlowAsset::TryUpdateManagedFlowPinsForNode(UFlowNode& FlowNode)
 {
+	// Skip for runtime-generated flows - pin management is manual at runtime
+	if (bIsRuntimeGenerated)
+	{
+		return false;
+	}
+
 	const UClass* FlowNodeClass = FlowNode.GetClass();
 	if (!IsValid(FlowNodeClass))
 	{
@@ -1545,6 +1573,530 @@ bool FFlowHarvestDataPinsWorkingData::DidAutoInputDataPinsChange() const
 bool FFlowHarvestDataPinsWorkingData::DidAutoOutputDataPinsChange() const
 {
 	return !FFlowPin::ArePinArraysMatchingNamesAndTypes(AutoOutputDataPinsPrev, AutoOutputDataPinsNext);
+}
+
+#endif
+
+//////////////////////////////////////////////////////////////////////////
+// Runtime Graph Generation
+
+UFlowNode* UFlowAsset::CreateNodeAtRuntime(TSubclassOf<UFlowNode> NodeClass, FGuid NodeGuid)
+{
+	if (!NodeClass)
+	{
+		UE_LOG(LogFlow, Error, TEXT("CreateNodeAtRuntime: NodeClass is null"));
+		return nullptr;
+	}
+	
+	// Generate GUID if not provided
+	if (!NodeGuid.IsValid())
+	{
+		NodeGuid = FGuid::NewGuid();
+	}
+	
+	// Check if GUID already exists
+	if (Nodes.Contains(NodeGuid))
+	{
+		UE_LOG(LogFlow, Error, TEXT("CreateNodeAtRuntime: Node with GUID %s already exists"), *NodeGuid.ToString());
+		return nullptr;
+	}
+	
+	// Create node without editor graph dependency
+	UFlowNode* NewNode = NewObject<UFlowNode>(this, NodeClass, NAME_None, RF_Transient);
+	if (!NewNode)
+	{
+		UE_LOG(LogFlow, Error, TEXT("CreateNodeAtRuntime: Failed to create node of class %s"), *NodeClass->GetName());
+		return nullptr;
+	}
+	
+	// Register the node
+	RegisterNodeAtRuntime(NodeGuid, NewNode);
+	
+	// Mark this asset as runtime-generated
+	bIsRuntimeGenerated = true;
+	
+	UE_LOG(LogFlow, Verbose, TEXT("CreateNodeAtRuntime: Created node %s with GUID %s"), *NodeClass->GetName(), *NodeGuid.ToString());
+	
+	return NewNode;
+}
+
+void UFlowAsset::RegisterNodeAtRuntime(const FGuid& NewGuid, UFlowNode* NewNode)
+{
+	if (!NewNode)
+	{
+		return;
+	}
+	
+	NewNode->SetGuid(NewGuid);
+	Nodes.Emplace(NewGuid, NewNode);
+	
+#if WITH_EDITOR
+	// Only harvest from graph if we have one (editor-created assets)
+	if (FlowGraph && !bIsRuntimeGenerated)
+	{
+		HarvestNodeConnections();
+		
+		if (TryUpdateManagedFlowPinsForNode(*NewNode))
+		{
+			(void) NewNode->OnReconstructionRequested.ExecuteIfBound();
+		}
+	}
+#endif
+}
+
+bool UFlowAsset::ConnectNodesAtRuntime(FGuid SourceNodeGuid, FName OutputPinName, FGuid TargetNodeGuid, FName InputPinName)
+{
+	UFlowNode* SourceNode = GetNode(SourceNodeGuid);
+	if (!SourceNode)
+	{
+		UE_LOG(LogFlow, Error, TEXT("ConnectNodesAtRuntime: Source node with GUID %s not found"), *SourceNodeGuid.ToString());
+		return false;
+	}
+	
+	UFlowNode* TargetNode = GetNode(TargetNodeGuid);
+	if (!TargetNode)
+	{
+		UE_LOG(LogFlow, Error, TEXT("ConnectNodesAtRuntime: Target node with GUID %s not found"), *TargetNodeGuid.ToString());
+		return false;
+	}
+	
+	// Validate output pin exists
+	const FFlowPin* OutputPin = SourceNode->FindOutputPinByName(OutputPinName);
+	if (!OutputPin)
+	{
+		UE_LOG(LogFlow, Error, TEXT("ConnectNodesAtRuntime: Output pin '%s' not found on source node %s"), 
+			*OutputPinName.ToString(), *SourceNode->GetClass()->GetName());
+		return false;
+	}
+	
+	// Validate input pin exists
+	const FFlowPin* InputPin = TargetNode->FindInputPinByName(InputPinName);
+	if (!InputPin)
+	{
+		UE_LOG(LogFlow, Error, TEXT("ConnectNodesAtRuntime: Input pin '%s' not found on target node %s"), 
+			*InputPinName.ToString(), *TargetNode->GetClass()->GetName());
+		return false;
+	}
+	
+	// Set up the connection directly in runtime data
+	FConnectedPin ConnectedPin;
+	ConnectedPin.NodeGuid = TargetNodeGuid;
+	ConnectedPin.PinName = InputPinName;
+	
+	SourceNode->Connections.Add(OutputPinName, ConnectedPin);
+	
+	UE_LOG(LogFlow, Verbose, TEXT("ConnectNodesAtRuntime: Connected %s.%s -> %s.%s"), 
+		*SourceNode->GetClass()->GetName(), *OutputPinName.ToString(),
+		*TargetNode->GetClass()->GetName(), *InputPinName.ToString());
+	
+	return true;
+}
+
+bool UFlowAsset::RemoveNodeAtRuntime(FGuid NodeGuid)
+{
+	UFlowNode* NodeToRemove = GetNode(NodeGuid);
+	if (!NodeToRemove)
+	{
+		UE_LOG(LogFlow, Warning, TEXT("RemoveNodeAtRuntime: Node with GUID %s not found"), *NodeGuid.ToString());
+		return false;
+	}
+	
+	// Remove connections to this node from other nodes
+	for (auto& NodePair : Nodes)
+	{
+		if (UFlowNode* Node = NodePair.Value)
+		{
+			TArray<FName> PinsToRemove;
+			for (auto& Connection : Node->Connections)
+			{
+				if (Connection.Value.NodeGuid == NodeGuid)
+				{
+					PinsToRemove.Add(Connection.Key);
+				}
+			}
+			
+			for (const FName& PinName : PinsToRemove)
+			{
+				Node->Connections.Remove(PinName);
+			}
+		}
+	}
+	
+	// Remove the node itself
+	Nodes.Remove(NodeGuid);
+	
+	UE_LOG(LogFlow, Verbose, TEXT("RemoveNodeAtRuntime: Removed node with GUID %s"), *NodeGuid.ToString());
+	
+	return true;
+}
+
+bool UFlowAsset::DisconnectPinAtRuntime(FGuid SourceNodeGuid, FName OutputPinName)
+{
+	UFlowNode* SourceNode = GetNode(SourceNodeGuid);
+	if (!SourceNode)
+	{
+		UE_LOG(LogFlow, Error, TEXT("DisconnectPinAtRuntime: Source node with GUID %s not found"), *SourceNodeGuid.ToString());
+		return false;
+	}
+	
+	if (!SourceNode->Connections.Contains(OutputPinName))
+	{
+		UE_LOG(LogFlow, Warning, TEXT("DisconnectPinAtRuntime: Pin '%s' has no connection"), *OutputPinName.ToString());
+		return false;
+	}
+	
+	SourceNode->Connections.Remove(OutputPinName);
+	
+	UE_LOG(LogFlow, Verbose, TEXT("DisconnectPinAtRuntime: Disconnected pin %s.%s"), 
+		*SourceNode->GetClass()->GetName(), *OutputPinName.ToString());
+	
+	return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Runtime Graph Serialization
+
+bool UFlowAsset::SerializeRuntimeGraphToJson(FString& OutSerializedData) const
+{
+	if (!bIsRuntimeGenerated)
+	{
+		UE_LOG(LogFlow, Warning, TEXT("SerializeRuntimeGraphToJson: This is not a runtime-generated graph"));
+		return false;
+	}
+
+	// Create JSON object
+	TSharedPtr<FJsonObject> RootObject = MakeShareable(new FJsonObject());
+	
+	// Version for future compatibility
+	RootObject->SetNumberField(TEXT("Version"), 1);
+	RootObject->SetStringField(TEXT("GraphName"), GetName());
+	RootObject->SetStringField(TEXT("CreatedAt"), FDateTime::Now().ToString());
+	
+	// Serialize Nodes
+	TArray<TSharedPtr<FJsonValue>> NodesArray;
+	for (const auto& NodePair : Nodes)
+	{
+		const UFlowNode* Node = NodePair.Value;
+		if (!Node)
+		{
+			continue;
+		}
+		
+		TSharedPtr<FJsonObject> NodeObject = MakeShareable(new FJsonObject());
+		NodeObject->SetStringField(TEXT("Guid"), NodePair.Key.ToString());
+		NodeObject->SetStringField(TEXT("Class"), Node->GetClass()->GetPathName());
+		
+		// Serialize node properties
+		TArray<uint8> NodeData;
+		FMemoryWriter MemoryWriter(NodeData, true);
+		FFlowArchive Archive(MemoryWriter);
+		const_cast<UFlowNode*>(Node)->Serialize(Archive);
+		
+		// Convert binary data to base64 string
+		FString NodeDataBase64 = FBase64::Encode(NodeData);
+		NodeObject->SetStringField(TEXT("Data"), NodeDataBase64);
+		
+		// Serialize connections from this node
+		TArray<TSharedPtr<FJsonValue>> ConnectionsArray;
+		for (const auto& Connection : Node->Connections)
+		{
+			TSharedPtr<FJsonObject> ConnObject = MakeShareable(new FJsonObject());
+			ConnObject->SetStringField(TEXT("OutputPin"), Connection.Key.ToString());
+			ConnObject->SetStringField(TEXT("TargetNode"), Connection.Value.NodeGuid.ToString());
+			ConnObject->SetStringField(TEXT("InputPin"), Connection.Value.PinName.ToString());
+			ConnectionsArray.Add(MakeShareable(new FJsonValueObject(ConnObject)));
+		}
+		NodeObject->SetArrayField(TEXT("Connections"), ConnectionsArray);
+		
+		NodesArray.Add(MakeShareable(new FJsonValueObject(NodeObject)));
+	}
+	RootObject->SetArrayField(TEXT("Nodes"), NodesArray);
+	
+	// Convert to string
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutSerializedData);
+	if (!FJsonSerializer::Serialize(RootObject.ToSharedRef(), Writer))
+	{
+		UE_LOG(LogFlow, Error, TEXT("SerializeRuntimeGraphToJson: Failed to serialize JSON"));
+		return false;
+	}
+	
+	UE_LOG(LogFlow, Log, TEXT("SerializeRuntimeGraphToJson: Successfully serialized %d nodes"), Nodes.Num());
+	return true;
+}
+
+bool UFlowAsset::DeserializeRuntimeGraphFromJson(const FString& SerializedData)
+{
+	// Parse JSON
+	TSharedPtr<FJsonObject> RootObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(SerializedData);
+	
+	if (!FJsonSerializer::Deserialize(Reader, RootObject) || !RootObject.IsValid())
+	{
+		UE_LOG(LogFlow, Error, TEXT("DeserializeRuntimeGraphFromJson: Failed to parse JSON"));
+		return false;
+	}
+	
+	// Check version
+	int32 Version = RootObject->GetIntegerField(TEXT("Version"));
+	if (Version != 1)
+	{
+		UE_LOG(LogFlow, Error, TEXT("DeserializeRuntimeGraphFromJson: Unsupported version %d"), Version);
+		return false;
+	}
+	
+	// Clear existing nodes
+	Nodes.Empty();
+	bIsRuntimeGenerated = true;
+	
+	// Deserialize Nodes
+	const TArray<TSharedPtr<FJsonValue>>* NodesArray;
+	if (!RootObject->TryGetArrayField(TEXT("Nodes"), NodesArray))
+	{
+		UE_LOG(LogFlow, Error, TEXT("DeserializeRuntimeGraphFromJson: No Nodes array found"));
+		return false;
+	}
+	
+	// First pass: Create all nodes
+	for (const TSharedPtr<FJsonValue>& NodeValue : *NodesArray)
+	{
+		const TSharedPtr<FJsonObject>& NodeObject = NodeValue->AsObject();
+		
+		FGuid NodeGuid;
+		FGuid::Parse(NodeObject->GetStringField(TEXT("Guid")), NodeGuid);
+		
+		FString ClassPath = NodeObject->GetStringField(TEXT("Class"));
+		UClass* NodeClass = LoadObject<UClass>(nullptr, *ClassPath);
+		
+		if (!NodeClass)
+		{
+			UE_LOG(LogFlow, Error, TEXT("DeserializeRuntimeGraphFromJson: Failed to load class %s"), *ClassPath);
+			continue;
+		}
+		
+		// Create the node
+		UFlowNode* NewNode = NewObject<UFlowNode>(this, NodeClass, NAME_None, RF_Transient);
+		if (!NewNode)
+		{
+			UE_LOG(LogFlow, Error, TEXT("DeserializeRuntimeGraphFromJson: Failed to create node"));
+			continue;
+		}
+		
+		// Deserialize node properties
+		FString NodeDataBase64 = NodeObject->GetStringField(TEXT("Data"));
+		TArray<uint8> NodeData;
+		FBase64::Decode(NodeDataBase64, NodeData);
+		
+		FMemoryReader MemoryReader(NodeData, true);
+		FFlowArchive Archive(MemoryReader);
+		NewNode->Serialize(Archive);
+		
+		// Register the node
+		RegisterNodeAtRuntime(NodeGuid, NewNode);
+	}
+	
+	// Second pass: Restore connections
+	for (const TSharedPtr<FJsonValue>& NodeValue : *NodesArray)
+	{
+		const TSharedPtr<FJsonObject>& NodeObject = NodeValue->AsObject();
+		
+		FGuid SourceNodeGuid;
+		FGuid::Parse(NodeObject->GetStringField(TEXT("Guid")), SourceNodeGuid);
+		
+		const TArray<TSharedPtr<FJsonValue>>* ConnectionsArray;
+		if (!NodeObject->TryGetArrayField(TEXT("Connections"), ConnectionsArray))
+		{
+			continue;
+		}
+		
+		for (const TSharedPtr<FJsonValue>& ConnValue : *ConnectionsArray)
+		{
+			const TSharedPtr<FJsonObject>& ConnObject = ConnValue->AsObject();
+			
+			FName OutputPin(*ConnObject->GetStringField(TEXT("OutputPin")));
+			FGuid TargetNodeGuid;
+			FGuid::Parse(ConnObject->GetStringField(TEXT("TargetNode")), TargetNodeGuid);
+			FName InputPin(*ConnObject->GetStringField(TEXT("InputPin")));
+			
+			ConnectNodesAtRuntime(SourceNodeGuid, OutputPin, TargetNodeGuid, InputPin);
+		}
+	}
+	
+	UE_LOG(LogFlow, Log, TEXT("DeserializeRuntimeGraphFromJson: Successfully deserialized %d nodes"), Nodes.Num());
+	return true;
+}
+
+#if WITH_EDITOR
+
+UFlowAsset* UFlowAsset::SaveRuntimeGraphAsAsset(const FString& PackagePath, const FString& AssetName)
+{
+	if (!bIsRuntimeGenerated)
+	{
+		UE_LOG(LogFlow, Warning, TEXT("SaveRuntimeGraphAsAsset: This is not a runtime-generated graph"));
+		return nullptr;
+	}
+	
+	// Create package
+	FString FullPackagePath = PackagePath + TEXT("/") + AssetName;
+	UPackage* Package = CreatePackage(*FullPackagePath);
+	if (!Package)
+	{
+		UE_LOG(LogFlow, Error, TEXT("SaveRuntimeGraphAsAsset: Failed to create package"));
+		return nullptr;
+	}
+	
+	// Create new FlowAsset and copy runtime nodes (without visual graph)
+	UFlowAsset* NewAsset = NewObject<UFlowAsset>(Package, *AssetName, RF_Public | RF_Standalone);
+	if (!NewAsset)
+	{
+		UE_LOG(LogFlow, Error, TEXT("SaveRuntimeGraphAsAsset: Failed to create asset"));
+		return nullptr;
+	}
+	
+	// Copy all nodes and connections
+	for (const auto& NodePair : Nodes)
+	{
+		if (UFlowNode* RuntimeNode = NodePair.Value)
+		{
+			// Duplicate the runtime node
+			UFlowNode* NewNode = DuplicateObject(RuntimeNode, NewAsset);
+			NewNode->SetGuid(NodePair.Key);
+			NewAsset->Nodes.Emplace(NodePair.Key, NewNode);
+		}
+	}
+	
+	// Copy properties
+	NewAsset->bIsRuntimeGenerated = false; // Now it's an editor asset
+	NewAsset->bWorldBound = bWorldBound;
+	NewAsset->ExpectedOwnerClass = ExpectedOwnerClass;
+	
+	// Mark package dirty and notify asset registry
+	Package->MarkPackageDirty();
+	FAssetRegistryModule::AssetCreated(NewAsset);
+	
+	UE_LOG(LogFlow, Log, TEXT("SaveRuntimeGraphAsAsset: Created asset at %s (without visual graph). Use FlowEditor tools to generate visual representation."), *FullPackagePath);
+	return NewAsset;
+}
+
+bool UFlowAsset::LoadFlowSaveDataFromFile(const FString& SaveSlotName, int32 UserIndex, TArray<FFlowAssetSaveData>& OutSaveData)
+{
+	OutSaveData.Empty();
+
+	// Load the SaveGame from slot
+	USaveGame* LoadedSave = UGameplayStatics::LoadGameFromSlot(SaveSlotName, UserIndex);
+	if (!LoadedSave)
+	{
+		UE_LOG(LogFlow, Warning, TEXT("LoadFlowSaveDataFromFile: Failed to load SaveGame from slot: %s"), *SaveSlotName);
+		return false;
+	}
+
+	// Cast to FlowSaveGame
+	UFlowSaveGame* FlowSave = Cast<UFlowSaveGame>(LoadedSave);
+	if (!FlowSave)
+	{
+		UE_LOG(LogFlow, Error, TEXT("LoadFlowSaveDataFromFile: SaveGame is not a UFlowSaveGame: %s"), *SaveSlotName);
+		return false;
+	}
+
+	// Copy the flow instances data
+	OutSaveData = FlowSave->FlowInstances;
+	
+	UE_LOG(LogFlow, Log, TEXT("LoadFlowSaveDataFromFile: Loaded %d flow instances from save file: %s"), OutSaveData.Num(), *SaveSlotName);
+	
+	return true;
+}
+
+UFlowAsset* UFlowAsset::CreateFlowAssetFromSaveData(const FFlowAssetSaveData& SaveData, const FString& PackagePath, const FString& AssetName, bool bCreateEditorGraph)
+{
+	// Create a new package
+	FString FullPackagePath = PackagePath;
+	if (!FullPackagePath.EndsWith(TEXT("/")))
+	{
+		FullPackagePath += TEXT("/");
+	}
+	FullPackagePath += AssetName;
+
+	UPackage* Package = CreatePackage(*FullPackagePath);
+	if (!Package)
+	{
+		UE_LOG(LogFlow, Error, TEXT("CreateFlowAssetFromSaveData: Failed to create package: %s"), *FullPackagePath);
+		return nullptr;
+	}
+
+	// Create new FlowAsset in the package
+	UFlowAsset* NewAsset = NewObject<UFlowAsset>(Package, *AssetName, RF_Public | RF_Standalone | RF_Transactional);
+	if (!NewAsset)
+	{
+		UE_LOG(LogFlow, Error, TEXT("CreateFlowAssetFromSaveData: Failed to create FlowAsset object"));
+		return nullptr;
+	}
+
+	// Deserialize the asset data to restore the asset's properties and nodes
+	{
+		FMemoryReader MemoryReader(SaveData.AssetData, true);
+		FFlowArchive Ar(MemoryReader);
+		NewAsset->Serialize(Ar);
+	}
+
+	// The nodes should now be restored from the serialization above
+	// Now deserialize individual node states from NodeRecords
+	for (const FFlowNodeSaveData& NodeRecord : SaveData.NodeRecords)
+	{
+		if (UFlowNode* Node = NewAsset->GetNode(NodeRecord.NodeGuid))
+		{
+			// Deserialize the node's saved state
+			FMemoryReader NodeReader(NodeRecord.NodeData, true);
+			FFlowArchive NodeAr(NodeReader);
+			Node->Serialize(NodeAr);
+			
+			UE_LOG(LogFlow, Verbose, TEXT("  Restored node: %s [%s]"), 
+				*Node->GetName(), *NodeRecord.NodeGuid.ToString());
+		}
+		else
+		{
+			UE_LOG(LogFlow, Warning, TEXT("  Node with GUID %s not found in restored asset"), 
+				*NodeRecord.NodeGuid.ToString());
+		}
+	}
+
+	NewAsset->bIsRuntimeGenerated = !bCreateEditorGraph;
+
+	// Mark package dirty
+	Package->MarkPackageDirty();
+	
+	FAssetRegistryModule::AssetCreated(NewAsset);
+	
+	UE_LOG(LogFlow, Log, TEXT("CreateFlowAssetFromSaveData: Created FlowAsset at %s (World: %s, Instance: %s, Nodes: %d, EditorGraph: %s)"), 
+		*FullPackagePath, 
+		*SaveData.WorldName,
+		*SaveData.InstanceName,
+		SaveData.NodeRecords.Num(),
+		bCreateEditorGraph ? TEXT("Yes") : TEXT("No"));
+	
+	return NewAsset;
+}
+
+UFlowAsset* UFlowAsset::LoadFlowAssetFromSaveFile(const FString& SaveSlotName, int32 UserIndex, int32 FlowIndex, const FString& PackagePath, const FString& AssetName)
+{
+	// Load the save data
+	TArray<FFlowAssetSaveData> SaveDataArray;
+	if (!LoadFlowSaveDataFromFile(SaveSlotName, UserIndex, SaveDataArray))
+	{
+		UE_LOG(LogFlow, Error, TEXT("LoadFlowAssetFromSaveFile: Failed to load save data from file: %s"), *SaveSlotName);
+		return nullptr;
+	}
+
+	// Check if the flow index is valid
+	if (!SaveDataArray.IsValidIndex(FlowIndex))
+	{
+		UE_LOG(LogFlow, Error, TEXT("LoadFlowAssetFromSaveFile: Invalid flow index %d (save file has %d flows)"), FlowIndex, SaveDataArray.Num());
+		return nullptr;
+	}
+
+	UE_LOG(LogFlow, Log, TEXT("LoadFlowAssetFromSaveFile: Loading flow %d/%d from save file: %s"), 
+		FlowIndex, SaveDataArray.Num() - 1, *SaveSlotName);
+
+	// Create the asset from the save data
+	return CreateFlowAssetFromSaveData(SaveDataArray[FlowIndex], PackagePath, AssetName, true);
 }
 
 #endif

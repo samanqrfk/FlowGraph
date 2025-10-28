@@ -21,6 +21,7 @@ public class Flow : ModuleRules
 			"DeveloperSettings",
 			"Engine",
 			"GameplayTags",
+			"Json",
 			"MovieScene",
 			"MovieSceneTracks",
 			"NetCore",

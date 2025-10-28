@@ -47,6 +47,23 @@ private:
 protected:
 	virtual void ExecuteInput(const FName& PinName) override;
 
+public:
+	// Blueprint-accessible setters for runtime configuration
+	UFUNCTION(BlueprintCallable, Category = "FlowNode|Log")
+	void SetMessage(const FString& InMessage) { Message = InMessage; }
+	
+	UFUNCTION(BlueprintCallable, Category = "FlowNode|Log")
+	void SetVerbosity(EFlowLogVerbosity InVerbosity) { Verbosity = InVerbosity; }
+	
+	UFUNCTION(BlueprintCallable, Category = "FlowNode|Log")
+	void SetPrintToScreen(bool bInPrintToScreen) { bPrintToScreen = bInPrintToScreen; }
+	
+	UFUNCTION(BlueprintCallable, Category = "FlowNode|Log")
+	void SetDuration(float InDuration) { Duration = InDuration; }
+	
+	UFUNCTION(BlueprintCallable, Category = "FlowNode|Log")
+	void SetTextColor(FColor InTextColor) { TextColor = InTextColor; }
+
 #if WITH_EDITOR
 public:
 	virtual void UpdateNodeConfigText_Implementation() override;
