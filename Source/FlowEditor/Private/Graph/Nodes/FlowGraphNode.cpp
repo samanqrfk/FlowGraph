@@ -423,7 +423,7 @@ void UFlowGraphNode::RewireOldPinsToNewPins(TArray<UEdGraphPin*>& InOldPins)
 			OldPin->bOrphanedPin = true;
 			OldPin->bNotConnectable = true;
 			OrphanedOldPins.Add(OldPin);
-			InOldPins.RemoveAt(OldPinIndex, 1, EAllowShrinking::No);
+			InOldPins.RemoveAt(OldPinIndex, 1, false);
 		}
 	}
 
@@ -1643,7 +1643,7 @@ void CleanInvalidPins(TArray<FFlowPin>& Array)
 	{
 		if (!Array[i].IsValid())
 		{
-			Array.RemoveAtSwap(i, EAllowShrinking::No);
+			Array.RemoveAtSwap(i, 1, false);
 		}
 	}
 }
@@ -1654,7 +1654,7 @@ void CleanInvalidPins(TArray<UEdGraphPin*>& Array)
 	{
 		if (Array[i]->bOrphanedPin)
 		{
-			Array.RemoveAtSwap(i, EAllowShrinking::No);
+			Array.RemoveAtSwap(i, 1, false);
 		}
 	}
 }
