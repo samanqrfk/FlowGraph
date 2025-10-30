@@ -121,7 +121,7 @@ FFlowAssetRuntimeBuilder UFlowAsset_Runtime::CreateBuilder()
 	return FFlowAssetRuntimeBuilder(this);
 }
 
-UFlowAsset_Runtime* UFlowAsset_Runtime::CreateRuntimeFlowAsset(UObject* WorldContextObject, FName AssetName)
+UFlowAsset_Runtime* UFlowAsset_Runtime::CreateRuntimeFlowAsset(UObject* WorldContextObject, FName AssetName, UObject* InOwner)
 {
 	if (!WorldContextObject)
 	{
@@ -139,6 +139,11 @@ UFlowAsset_Runtime* UFlowAsset_Runtime::CreateRuntimeFlowAsset(UObject* WorldCon
 	
 	if (NewAsset)
 	{
+		if (InOwner)
+		{
+			NewAsset->Owner = TWeakObjectPtr<UObject>(InOwner);
+		}
+		
 		UE_LOG(LogFlow, Verbose, TEXT("UFlowAsset_Runtime::CreateRuntimeFlowAsset: Created runtime FlowAsset '%s'"), 
 			*AssetName.ToString());
 	}
