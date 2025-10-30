@@ -29,19 +29,19 @@ class FLOW_API UFlowNode_Log : public UFlowNode
 private:
 	// The message to write to the log
 	// (if the Message input pin is not connected to another source)
-	UPROPERTY(EditAnywhere, Category = "Flow", meta = (DefaultForInputFlowPin, FlowPinType = String))
+	UPROPERTY(SaveGame, EditAnywhere, Category = "Flow", meta = (DefaultForInputFlowPin, FlowPinType = String))
 	FString Message;
 
-	UPROPERTY(EditAnywhere, Category = "Flow")
+	UPROPERTY(SaveGame, EditAnywhere, Category = "Flow")
 	EFlowLogVerbosity Verbosity;
 
-	UPROPERTY(EditAnywhere, Category = "Flow")
+	UPROPERTY(SaveGame, EditAnywhere, Category = "Flow")
 	bool bPrintToScreen;
 
-	UPROPERTY(EditAnywhere, Category = "Flow", meta = (EditCondition = "bPrintToScreen", EditConditionHides))
+	UPROPERTY(SaveGame, EditAnywhere, Category = "Flow", meta = (EditCondition = "bPrintToScreen", EditConditionHides))
 	float Duration;
 
-	UPROPERTY(EditAnywhere, Category = "Flow", meta = (EditCondition = "bPrintToScreen", EditConditionHides))
+	UPROPERTY(SaveGame, EditAnywhere, Category = "Flow", meta = (EditCondition = "bPrintToScreen", EditConditionHides))
 	FColor TextColor;
 
 protected:
