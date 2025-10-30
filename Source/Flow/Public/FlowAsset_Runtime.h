@@ -97,10 +97,11 @@ public:
 	
 	/**
 	 * Static factory method to create a runtime FlowAsset with builder
-	 * @param Outer The outer object (usually a UWorld or game instance)
+	 * @param WorldContextObject The outer object (usually a UWorld or game instance)
+	 * @param InOwner The owner object for this Flow instance (e.g., World Settings or Player Controller)
 	 * @param AssetName Optional name for the asset
 	 * @return A new runtime FlowAsset instance
 	 */
-	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Runtime", meta = (WorldContext = "WorldContextObject"))
-	static UFlowAsset_Runtime* CreateRuntimeFlowAsset(UObject* WorldContextObject, FName AssetName = NAME_None);
+	UFUNCTION(BlueprintCallable, Category = "FlowAsset|Runtime", meta = (WorldContext = "WorldContextObject", DefaultToSelf = "InOwner"))
+	static UFlowAsset_Runtime* CreateRuntimeFlowAsset(UObject* WorldContextObject, FName AssetName, UObject* InOwner);
 };
