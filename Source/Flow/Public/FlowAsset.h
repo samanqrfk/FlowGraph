@@ -10,7 +10,7 @@
 	#include "FlowMessageLog.h"
 #endif
 
-#include "StructUtils/PropertyBag.h"
+#include "PropertyBag.h"
 #include "UObject/ObjectKey.h"
 #include "FlowAsset.generated.h"
 

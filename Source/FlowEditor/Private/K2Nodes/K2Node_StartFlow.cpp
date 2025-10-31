@@ -14,7 +14,7 @@
 #include "FlowEditorStyle.h"
 #include "K2Node_Self.h"
 #include "Kismet2/BlueprintEditorUtils.h"
-#include "StructUtils/PropertyBag.h"
+#include "PropertyBag.h"
 
 #define LOCTEXT_NAMESPACE "K2Node_StartFlow"
 

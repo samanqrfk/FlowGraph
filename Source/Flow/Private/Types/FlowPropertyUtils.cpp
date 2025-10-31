@@ -961,17 +961,17 @@ namespace PropertyBagUtils
 		}
 
 		// Add or update property
-		EPropertyBagAlterationResult Result;
+		//EPropertyBagAlterationResult Result;
 		if (NewTypeDesc.ContainerTypes.IsEmpty())
 		{
-			Result = TargetBag.AddProperty(PropertyName, NewTypeDesc.ValueType, NewTypeDesc.ValueTypeObject);
+			TargetBag.AddProperty(PropertyName, NewTypeDesc.ValueType, const_cast<UObject*>(NewTypeDesc.ValueTypeObject.Get()));
 		}
 		else
 		{
-			Result = TargetBag.AddContainerProperty(PropertyName, NewTypeDesc.ContainerTypes, NewTypeDesc.ValueType, const_cast<UObject*>(NewTypeDesc.ValueTypeObject.Get()));
+			TargetBag.AddContainerProperty(PropertyName, NewTypeDesc.ContainerTypes, NewTypeDesc.ValueType, const_cast<UObject*>(NewTypeDesc.ValueTypeObject.Get()));
 		}
 
-		if (Result == EPropertyBagAlterationResult::Success)
+		if (true)
 		{
 			if (bOutDefinitionChanged)
 			{

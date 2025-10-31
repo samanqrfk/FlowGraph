@@ -20,8 +20,9 @@ public class FlowEditor : ModuleRules
 			"Flow",
 			"FlowDebugger",
 			"MessageLog", 
+			"StructUtils",
 			"StructUtilsEditor"
-		});
+        });
 
 		PrivateDependencyModuleNames.AddRange(new[]
 		{

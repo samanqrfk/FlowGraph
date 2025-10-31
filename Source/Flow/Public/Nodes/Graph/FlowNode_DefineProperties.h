@@ -3,7 +3,7 @@
 #pragma once
 
 #include "Nodes/FlowNode.h"
-#include "StructUtils/PropertyBag.h"
+#include "PropertyBag.h"
 
 #include "FlowNode_DefineProperties.generated.h"
 

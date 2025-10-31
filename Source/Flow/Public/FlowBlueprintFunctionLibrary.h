@@ -3,7 +3,7 @@
 #pragma once
 
 #include "Kismet/BlueprintFunctionLibrary.h"
-#include "StructUtils/InstancedStruct.h"
+#include "InstancedStruct.h"
 #include "FlowBlueprintFunctionLibrary.generated.h"
 
 class UFlowAsset;

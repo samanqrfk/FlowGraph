@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
-#include "StructUtils/PropertyBag.h"
+#include "PropertyBag.h"
 #include "FlowGraphDetailsDataSource.generated.h"
 
 class FFlowAssetEditor;

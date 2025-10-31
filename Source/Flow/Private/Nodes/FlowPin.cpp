@@ -3,7 +3,7 @@
 #include "Nodes/FlowPin.h"
 #include "Misc/DateTime.h"
 #include "Misc/MessageDialog.h"
-#include "StructUtils/InstancedStruct.h"
+#include "InstancedStruct.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(FlowPin)
 

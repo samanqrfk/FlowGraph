@@ -23,8 +23,8 @@ public:
 
     //~ FGraphEditorDragDropAction Interface
     virtual void HoverTargetChanged() override;
-    virtual FReply DroppedOnPanel(const TSharedRef<SWidget>& Panel, const FVector2f& ScreenPosition, const FVector2f& GraphPosition, UEdGraph& Graph) override;
-    virtual FReply DroppedOnPin(const FVector2f& ScreenPosition, const FVector2f& GraphPosition) override;
+    virtual FReply DroppedOnPanel(const TSharedRef<SWidget>& Panel, FVector2D ScreenPosition, FVector2D GraphPosition, UEdGraph& Graph) override;
+    virtual FReply DroppedOnPin(FVector2D ScreenPosition, FVector2D GraphPosition) override;
     //~ End FGraphEditorDragDropAction Interface
 
 private:
@@ -43,7 +43,7 @@ public:
 
     //~ IDetailDragDropHandler Interface
     virtual TSharedPtr<FDragDropOperation> CreateDragDropOperation() const override;
-    virtual bool UseHandleWidget() const override { return true; }
+    //virtual bool UseHandleWidget() const override { return true; }
     virtual bool AcceptDrop(const FDragDropEvent& DragDropEvent, EItemDropZone DropZone) const override;
     virtual TOptional<EItemDropZone> CanAcceptDrop(const FDragDropEvent& DragDropEvent, EItemDropZone DropZone) const override;
     //~ End IDetailDragDropHandler Interface
@@ -59,7 +59,7 @@ private:
 class FFlowGraphPropertyBagDataDetails : public FPropertyBagInstanceDataDetails
 {
 public:
-    FFlowGraphPropertyBagDataDetails(const FConstructParams& ConstructParams, TWeakPtr<FFlowAssetEditor> InEditor);
+    FFlowGraphPropertyBagDataDetails(TWeakPtr<FFlowAssetEditor> InEditor, TSharedPtr<IPropertyHandle> InStructProperty, const TSharedPtr<IPropertyUtilities>& InPropUtils, const bool bInFixedLayout, const bool bInAllowArrays = true);
 
     //~ FInstancedStructDataDetails Interface
     virtual void OnChildRowAdded(IDetailPropertyRow& ChildRow) override;

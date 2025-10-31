@@ -48,7 +48,7 @@ FString FFlowGraphUtils::RemovePrefixFromNodeText(const FText& Source)
 		Prefix = FName::NameToDisplayString(Prefix, false);
 		if (SourceString.StartsWith(Prefix))
 		{
-			SourceString.MidInline(Prefix.Len(), MAX_int32, EAllowShrinking::No);
+			SourceString.MidInline(Prefix.Len(), MAX_int32, false);
 			SourceString = SourceString.TrimStart();
 		}
 	}

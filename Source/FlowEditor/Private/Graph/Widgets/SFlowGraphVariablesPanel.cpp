@@ -94,7 +94,8 @@ void SFlowGraphVariablesPanel::AddNewVariable()
 		NewVarName = FName(*FString::Printf(TEXT("NewVar_%d"), Index++));
 	}
 	while (TargetBag.FindPropertyDescByName(NewVarName) != nullptr);
-	if (TargetBag.AddProperty(NewVarName, EPropertyBagPropertyType::Bool) == EPropertyBagAlterationResult::Success)
+	TargetBag.AddProperty(NewVarName, EPropertyBagPropertyType::Bool);
+	if (true)
 	{
 		Refresh();
 		Asset->OnGraphVariablesChanged.Broadcast();

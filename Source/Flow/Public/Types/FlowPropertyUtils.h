@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "StructUtils/PropertyBag.h"
+#include "PropertyBag.h"
 #include "FlowPropertyUtils.generated.h"
 
 // Forward Declarations

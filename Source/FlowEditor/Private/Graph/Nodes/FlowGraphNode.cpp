@@ -32,7 +32,7 @@
 #include "ToolMenuSection.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Nodes/FlowNodeBlueprint.h"
-#include "StructUtils/PropertyBag.h"
+#include "PropertyBag.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(FlowGraphNode)
 
@@ -529,7 +529,7 @@ void UFlowGraphNode::RewireOldPinsToNewPins(TArray<UEdGraphPin*>& InOldPins)
 			OldPin->bOrphanedPin = true;
 			OldPin->bNotConnectable = true;
 			OrphanedOldPins.Add(OldPin);
-			InOldPins.RemoveAt(OldPinIndex, 1, EAllowShrinking::No);
+			InOldPins.RemoveAt(OldPinIndex, 1, false);
 		}
 	}
 

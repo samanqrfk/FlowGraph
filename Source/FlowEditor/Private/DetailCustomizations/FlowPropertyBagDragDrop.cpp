@@ -87,9 +87,7 @@ void FFlowGraphVariableDragDropAction::HoverTargetChanged()
 	SetSimpleFeedbackMessage(Icon, FLinearColor::White, Message);
 }
 
-FReply FFlowGraphVariableDragDropAction::DroppedOnPanel(const TSharedRef<SWidget>& Panel,
-                                                        const FVector2f& ScreenPosition, const FVector2f& GraphPosition,
-                                                        UEdGraph& Graph)
+FReply FFlowGraphVariableDragDropAction::DroppedOnPanel(const TSharedRef<SWidget>& Panel, FVector2D ScreenPosition, FVector2D GraphPosition, UEdGraph& Graph)
 {
 	const FModifierKeysState ModifierKeys = FSlateApplication::Get().GetModifierKeys();
 	const bool bIsSetting = ModifierKeys.IsControlDown() || ModifierKeys.IsAltDown();
@@ -106,7 +104,7 @@ FReply FFlowGraphVariableDragDropAction::DroppedOnPanel(const TSharedRef<SWidget
 	return FReply::Unhandled();
 }
 
-FReply FFlowGraphVariableDragDropAction::DroppedOnPin(const FVector2f& ScreenPosition, const FVector2f& GraphPosition)
+FReply FFlowGraphVariableDragDropAction::DroppedOnPin(FVector2D ScreenPosition, FVector2D GraphPosition)
 {
 	if (UEdGraphPin* CurrentHoveredPin = GetHoveredPin())
 	{
@@ -155,9 +153,8 @@ TOptional<EItemDropZone> FFlowGraphVariableDragDropHandler::CanAcceptDrop(
 }
 
 // FFlowGraphPropertyBagDataDetails Implementation
-FFlowGraphPropertyBagDataDetails::FFlowGraphPropertyBagDataDetails(const FConstructParams& ConstructParams,
-                                                                   TWeakPtr<FFlowAssetEditor> InEditor)
-	: FPropertyBagInstanceDataDetails(ConstructParams), EditorPtr(InEditor)
+FFlowGraphPropertyBagDataDetails::FFlowGraphPropertyBagDataDetails(TWeakPtr<FFlowAssetEditor> InEditor, TSharedPtr<IPropertyHandle> InStructProperty, const TSharedPtr<IPropertyUtilities>& InPropUtils, const bool bInFixedLayout, const bool bInAllowArrays)
+	: FPropertyBagInstanceDataDetails(InStructProperty, InPropUtils, bInFixedLayout, bInAllowArrays), EditorPtr(InEditor)
 {
 }
 
@@ -167,9 +164,10 @@ void FFlowGraphPropertyBagDataDetails::OnChildRowAdded(IDetailPropertyRow& Child
 
 	const UPropertyBag* BagStruct = GetCommonBagStruct(BagStructProperty);
 	const FProperty* ChildProperty = ChildRow.GetPropertyHandle()->GetProperty();
-	const FPropertyBagPropertyDesc* Desc = BagStruct ? BagStruct->FindPropertyDescByProperty(ChildProperty) : nullptr;
 
-	if (Desc && EnumHasAnyFlags(ChildRowFeatures, EPropertyBagChildRowFeatures::DragAndDrop))
+	const FPropertyBagPropertyDesc* Desc = BagStruct ? BagStruct->GetPropertyDescs().FindByPredicate([&ChildProperty](const FPropertyBagPropertyDesc& Desc) { return Desc.CachedProperty && Desc.CachedProperty == ChildProperty; }) : nullptr;
+
+	if (Desc && !bFixedLayout)
 	{
 		TSharedPtr<FFlowGraphVariableDragDropHandler> DragDropHandler = MakeShared<FFlowGraphVariableDragDropHandler>(
 			*Desc, EditorPtr);
@@ -188,12 +186,7 @@ void FFlowGraphDataSourceDetails::CustomizeDetails(IDetailLayoutBuilder& DetailB
 	const TSharedRef<IPropertyHandle> VarsHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UFlowGraphDetailsDataSource, GraphVariables));
 	DetailBuilder.HideProperty(VarsHandle);
 
-	FPropertyBagInstanceDataDetails::FConstructParams Params;
-	Params.BagStructProperty = VarsHandle;
-	Params.PropUtils = DetailBuilder.GetPropertyUtilities();
-	Params.ChildRowFeatures = EPropertyBagChildRowFeatures::Extended;
-
-	const auto BagDetails = MakeShared<FFlowGraphPropertyBagDataDetails>(Params, EditorPtr);
+	const auto BagDetails = MakeShared<FFlowGraphPropertyBagDataDetails>(EditorPtr, VarsHandle, DetailBuilder.GetPropertyUtilities(), /*bFixedLayout*/false);
 	IDetailCategoryBuilder& Category = DetailBuilder.EditCategory("GraphVariables", LOCTEXT("GraphVariablesCategory", "Graph Variables"));
 	Category.AddCustomBuilder(BagDetails, /*bForAdvanced=*/false);
 }

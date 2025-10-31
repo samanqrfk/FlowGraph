@@ -7,7 +7,7 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 
 #include "FlowComponent.h"
-#include "StructUtils/PropertyBag.h"
+#include "PropertyBag.h"
 #include "FlowSubsystem.generated.h"
 
 class UFlowAsset;

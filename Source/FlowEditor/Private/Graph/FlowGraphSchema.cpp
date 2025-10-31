@@ -413,8 +413,11 @@ bool UFlowGraphSchema::TryCreateConnection(UEdGraphPin* PinA, UEdGraphPin* PinB)
 	{
 		UEdGraphPin* InputPin = (PinA->Direction == EGPD_Input) ? PinA : PinB;
 		UEdGraphPin* OutputPin = (InputPin == PinA) ? PinB : PinA;
-		
-		const FVector2f Location2f = (OutputPin->GetOwningNode()->GetPosition() + InputPin->GetOwningNode()->GetPosition()) / 2.0f;
+
+		FVector2f OutputPinPosition(OutputPin->GetOwningNode()->NodePosX, OutputPin->GetOwningNode()->NodePosY);
+		FVector2f InputPinPosition(OutputPin->GetOwningNode()->NodePosX, OutputPin->GetOwningNode()->NodePosY);
+
+		const FVector2f Location2f = (OutputPinPosition + InputPinPosition) / 2.0f;
 		const FVector2D Location(Location2f);
 
 		// Create the conversion node.

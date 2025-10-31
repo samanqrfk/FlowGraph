@@ -324,7 +324,7 @@ bool UFlowAsset::CanFlowAssetReferenceFlowNode(const UClass& FlowNodeClass, FTex
 
 	// Confirm plugin reference restrictions are being respected
 	FAssetReferenceFilterContext AssetReferenceFilterContext;
-	AssetReferenceFilterContext.AddReferencingAsset(FAssetData(this));
+	AssetReferenceFilterContext.ReferencingAssets.Add(FAssetData(this));
 	const TSharedPtr<IAssetReferenceFilter> FlowAssetReferenceFilter = GEditor->MakeAssetReferenceFilter(AssetReferenceFilterContext);
 	if (FlowAssetReferenceFilter.IsValid())
 	{
