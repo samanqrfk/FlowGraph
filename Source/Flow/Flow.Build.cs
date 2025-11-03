@@ -25,7 +25,9 @@ public class Flow : ModuleRules
 			"MovieSceneTracks",
 			"NetCore",
 			"Slate",
-			"SlateCore"
+			"SlateCore",
+			"Json",
+			"JsonUtilities"
 		});
 
 		if (target.Type == TargetType.Editor)

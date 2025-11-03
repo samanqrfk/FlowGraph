@@ -45,6 +45,7 @@ public:
 	friend class FFlowAssetDetails;
 	friend class FFlowNode_SubGraphDetails;
 	friend class UFlowGraphSchema;
+	friend class FFlowEditorModule;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Flow Asset")
 	FGuid AssetGuid;
@@ -398,6 +399,19 @@ public:
 	// Returns nodes active in the past, done their work
 	UFUNCTION(BlueprintPure, Category = "Flow")
 	const TArray<UFlowNode*>& GetRecordedNodes() const { return RecordedNodes; }
+
+	UFUNCTION(BlueprintPure, Category = "Flow")
+	FString FlowAssetToJSON() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Flow")
+	static UFlowAsset* FlowAssetFromJSON(const FString& InJson);
+
+private:
+	static TSharedPtr<FJsonObject> SerializeNode(const UFlowNode* Node);
+	static TSharedPtr<FJsonObject> SerializeAddOn(const UFlowNodeAddOn* AddOn);
+
+	static UFlowNode* DeserializeNode(const TSharedPtr<FJsonObject>& NodeJson, UFlowAsset* AssetOuter);
+	static UFlowNodeAddOn* DeserializeAddOn(const TSharedPtr<FJsonObject>& AddOnJson, UObject* Outer);
 
 	//////////////////////////////////////////////////////////////////////////
 	// Expected Owner Class support (for use with CallOwnerFunction nodes)

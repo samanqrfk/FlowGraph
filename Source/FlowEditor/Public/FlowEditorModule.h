@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "FlowEditorModuleInterface.h"
 #include "AssetTypeCategories.h"
 #include "IAssetTypeActions.h"
 #include "Modules/ModuleInterface.h"
@@ -21,7 +22,7 @@ struct FLOWEDITOR_API FFLowAssetCategoryPaths : EAssetCategoryPaths
 	static FAssetCategoryPath Flow;
 };
 
-class FLOWEDITOR_API FFlowEditorModule : public IModuleInterface, public IHasMenuExtensibility, public IHasToolBarExtensibility
+class FLOWEDITOR_API FFlowEditorModule : public IFlowEditorModuleInterface, public IHasMenuExtensibility, public IHasToolBarExtensibility
 {
 public:
 	static EAssetTypeCategories::Type FlowAssetCategory;
@@ -67,4 +68,6 @@ private:
 
 public:
 	static TSharedRef<FFlowAssetEditor> CreateFlowAssetEditor(const EToolkitMode::Type Mode, const TSharedPtr<IToolkitHost>& InitToolkitHost, UFlowAsset* FlowAsset);
+
+	virtual void DeserializeEdGraphFromJSON(UFlowAsset* FlowAsset, TSharedPtr<FJsonObject> RootJson) override;
 };

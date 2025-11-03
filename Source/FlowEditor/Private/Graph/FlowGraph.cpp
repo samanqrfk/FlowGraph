@@ -7,6 +7,7 @@
 #include "AddOns/FlowNodeAddOn.h"
 #include "Nodes/FlowNode.h"
 #include "FlowEditorLogChannels.h"
+#include "FlowEditorModule.h"
 
 #include "Editor.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -467,3 +468,101 @@ void UFlowGraph::RecursivelySetupAllFlowGraphNodesForEditing(UFlowGraphNode& Fro
 	}
 }
 
+void FFlowEditorModule::DeserializeEdGraphFromJSON(UFlowAsset* FlowAsset, TSharedPtr<FJsonObject> RootJson)
+{
+	FlowAsset->FlowGraph = CastChecked<UFlowGraph>(FBlueprintEditorUtils::CreateNewGraph(FlowAsset, NAME_None, UFlowGraph::StaticClass(), UFlowGraphSchema::StaticClass()));
+
+	TMap<FString, UFlowNode*> NameToNode;
+	TArray<UFlowNode*> Nodes;
+	for (auto& Pair : FlowAsset->Nodes)
+	{
+		Nodes.Add(Pair.Value);
+		NameToNode.Add(Pair.Value.GetName(), Pair.Value);
+	}
+
+	// Create UEdGraphNode for each UFlowNode and set up mapping
+	TMap<UFlowNode*, UEdGraphNode*> NodeToGraphNode;
+	for (UFlowNode* Node : Nodes)
+	{
+		// create new Flow Graph node
+		const TSubclassOf<UEdGraphNode> GraphNodeClass = UFlowGraphSchema::GetAssignedGraphNodeClass(Node->GetClass());
+
+		// Create a new UEdGraphNode (use your custom node class if needed)
+		UFlowGraphNode* GraphNode = NewObject<UFlowGraphNode>(FlowAsset->FlowGraph, GraphNodeClass, NAME_None, RF_Transient);
+
+		// register to the graph
+		GraphNode->NodeGuid = Node->GetGuid();
+		FlowAsset->FlowGraph->Nodes.Add(GraphNode);
+
+		// Link the FlowNode to its GraphNode and vice versa
+		Node->SetGraphNode(GraphNode);
+		GraphNode->SetNodeTemplate(Node);
+		NodeToGraphNode.Add(Node, GraphNode);
+	}
+
+	// Reconstruct pin connections in the UEdGraphNode objects
+	const TArray<TSharedPtr<FJsonValue>>* EdgesArrayPtr;
+	if (RootJson->TryGetArrayField(TEXT("Edges"), EdgesArrayPtr))
+	{
+		for (const TSharedPtr<FJsonValue>& EdgeValue : *EdgesArrayPtr)
+		{
+			const TSharedPtr<FJsonObject>* EdgeObjPtr;
+			if (EdgeValue->TryGetObject(EdgeObjPtr))
+			{
+				FString FromName, FromPin, ToName, ToPin;
+				(*EdgeObjPtr)->TryGetStringField(TEXT("From"), FromName);
+				(*EdgeObjPtr)->TryGetStringField(TEXT("FromPin"), FromPin);
+				(*EdgeObjPtr)->TryGetStringField(TEXT("To"), ToName);
+				(*EdgeObjPtr)->TryGetStringField(TEXT("ToPin"), ToPin);
+
+				UFlowNode* SourceNode = NameToNode.FindRef(FromName);
+				UFlowNode* TargetNode = NameToNode.FindRef(ToName);
+
+				UEdGraphNode* SourceGraphNode = NodeToGraphNode.FindRef(SourceNode);
+				UEdGraphNode* TargetGraphNode = NodeToGraphNode.FindRef(TargetNode);
+
+				if (SourceGraphNode && TargetGraphNode)
+				{
+					// Create pins if not present (minimal, for connection only)
+					UEdGraphPin* SourcePin = nullptr;
+					UEdGraphPin* TargetPin = nullptr;
+
+					// Find or create output pin on source
+					for (UEdGraphPin* Pin : SourceGraphNode->Pins)
+					{
+						if (Pin->PinName == FName(*FromPin) && Pin->Direction == EGPD_Output)
+						{
+							SourcePin = Pin;
+							break;
+						}
+					}
+					if (!SourcePin)
+					{
+						SourcePin = SourceGraphNode->CreatePin(EGPD_Output, NAME_None, FName(*FromPin));
+					}
+
+					// Find or create input pin on target
+					for (UEdGraphPin* Pin : TargetGraphNode->Pins)
+					{
+						if (Pin->PinName == FName(*ToPin) && Pin->Direction == EGPD_Input)
+						{
+							TargetPin = Pin;
+							break;
+						}
+					}
+					if (!TargetPin)
+					{
+						TargetPin = TargetGraphNode->CreatePin(EGPD_Input, NAME_None, FName(*ToPin));
+					}
+
+					// Link pins
+					SourcePin->LinkedTo.Add(TargetPin);
+					TargetPin->LinkedTo.Add(SourcePin);
+				}
+			}
+		}
+	}
+
+	// Create the UEdGraph for the asset
+	UFlowGraph::CreateGraph(FlowAsset);
+}

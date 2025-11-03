@@ -8,6 +8,7 @@
 
 #include "AddOns/FlowNodeAddOn.h"
 #include "Nodes/FlowNodeBase.h"
+#include "Nodes/FlowNode.h"
 #include "Nodes/Graph/FlowNode_CustomInput.h"
 #include "Nodes/Graph/FlowNode_CustomOutput.h"
 #include "Nodes/Graph/FlowNode_Start.h"
@@ -16,6 +17,15 @@
 #include "Engine/World.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
+
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+#include "JsonObjectConverter.h"
+#include "FlowEditorModuleInterface.h"
+
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonWriter.h"
+#include "Serialization/JsonSerializer.h"
 
 #if WITH_EDITOR
 	#include "Editor.h"
@@ -1174,3 +1184,410 @@ void UFlowAsset::LogNote(const FString& MessageToLog, const UFlowNodeBase* Node)
 	}
 }
 #endif
+
+TSharedPtr<FJsonObject> UFlowAsset::SerializeAddOn(const UFlowNodeAddOn* AddOn)
+{
+	TSharedPtr<FJsonObject> AddOnJson = MakeShared<FJsonObject>();
+
+	AddOnJson->SetStringField(TEXT("Type"), AddOn->GetClass()->GetName());
+
+	// Input pins
+	TArray<TSharedPtr<FJsonValue>> InputNames;
+	for (const FFlowPin& Pin : AddOn->GetInputPins())
+	{
+		InputNames.Add(MakeShared<FJsonValueString>(Pin.PinName.ToString()));
+	}
+	AddOnJson->SetArrayField(TEXT("InputPins"), InputNames);
+
+	// Output pins
+	// todo: addon output pins is editor only?
+
+	// Serialize editable, non-editor-only properties (excluding UFlowNodeBase and its parents)
+	TArray<TSharedPtr<FJsonValue>> PropertiesArray;
+	for (TFieldIterator<FProperty> PropIt(AddOn->GetClass()); PropIt; ++PropIt)
+	{
+		FProperty* Property = *PropIt;
+		if (Property->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible) &&
+			!Property->HasAnyPropertyFlags(CPF_Transient | CPF_EditorOnly) &&
+			Property->GetOwnerClass() != UFlowNodeBase::StaticClass() &&
+			Property->GetOwnerClass()->IsChildOf(UFlowNodeBase::StaticClass()))
+		{
+			TSharedPtr<FJsonValue> JsonValue = FJsonObjectConverter::UPropertyToJsonValue(
+				Property,
+				Property->ContainerPtrToValuePtr<void>(AddOn),
+				CPF_Edit | CPF_BlueprintVisible,
+				CPF_Transient | CPF_EditorOnly
+			);
+
+			TSharedPtr<FJsonObject> PropJson = MakeShared<FJsonObject>();
+			PropJson->SetField(Property->GetName(), JsonValue);
+			PropertiesArray.Add(MakeShared<FJsonValueObject>(PropJson));
+		}
+	}
+	AddOnJson->SetArrayField(TEXT("Properties"), PropertiesArray);
+
+	// Serialize AddOns
+	TArray<TSharedPtr<FJsonValue>> AddOnsArray;
+	AddOn->ForEachAddOnConst([&AddOnsArray](const UFlowNodeAddOn& AddOn)
+	{
+		AddOnsArray.Add(MakeShared<FJsonValueObject>(SerializeAddOn(&AddOn)));
+		return EFlowForEachAddOnFunctionReturnValue::Continue;
+	}, EFlowForEachAddOnChildRule::ImmediateChildrenOnly);
+	if (AddOnsArray.Num())
+	{
+		AddOnJson->SetArrayField(TEXT("AddOns"), AddOnsArray);
+	}
+
+	return AddOnJson;
+}
+
+TSharedPtr<FJsonObject> UFlowAsset::SerializeNode(const UFlowNode* Node)
+{
+	TSharedPtr<FJsonObject> NodeJson = MakeShared<FJsonObject>();
+
+	NodeJson->SetStringField(TEXT("Name"), Node->GetName());
+	NodeJson->SetStringField(TEXT("Type"), Node->GetClass()->GetName());
+
+	// Input pins
+	TArray<TSharedPtr<FJsonValue>> InputNames;
+	for (const FFlowPin& Pin : Node->GetInputPins())
+	{
+		InputNames.Add(MakeShared<FJsonValueString>(Pin.PinName.ToString()));
+	}
+	NodeJson->SetArrayField(TEXT("InputPins"), InputNames);
+
+	// Output pins
+	TArray<TSharedPtr<FJsonValue>> OutputNames;
+	for (const FFlowPin& Pin : Node->GetOutputPins())
+	{
+		OutputNames.Add(MakeShared<FJsonValueString>(Pin.PinName.ToString()));
+	}
+	NodeJson->SetArrayField(TEXT("OutputPins"), OutputNames);
+
+	// Editable properties (excluding UFlowNode and its parents)
+	TArray<TSharedPtr<FJsonValue>> PropertiesArray;
+	for (TFieldIterator<FProperty> PropIt(Node->GetClass()); PropIt; ++PropIt)
+	{
+		FProperty* Property = *PropIt;
+		if (Property->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible) &&
+			!Property->HasAnyPropertyFlags(CPF_Transient | CPF_EditorOnly) &&
+			Property->GetOwnerClass() != UFlowNode::StaticClass() &&
+			Property->GetOwnerClass()->IsChildOf(UFlowNode::StaticClass()))
+		{
+			TSharedPtr<FJsonValue> JsonValue = FJsonObjectConverter::UPropertyToJsonValue(
+				Property,
+				Property->ContainerPtrToValuePtr<void>(Node),
+				CPF_Edit | CPF_BlueprintVisible,
+				CPF_Transient | CPF_EditorOnly
+			);
+
+			TSharedPtr<FJsonObject> PropJson = MakeShared<FJsonObject>();
+			PropJson->SetField(Property->GetName(), JsonValue);
+			PropertiesArray.Add(MakeShared<FJsonValueObject>(PropJson));
+		}
+	}
+	NodeJson->SetArrayField(TEXT("Properties"), PropertiesArray);
+
+	// Serialize AddOns
+	TArray<TSharedPtr<FJsonValue>> AddOnsArray;
+	Node->ForEachAddOnConst([&AddOnsArray](const UFlowNodeAddOn& AddOn)
+	{
+		AddOnsArray.Add(MakeShared<FJsonValueObject>(SerializeAddOn(&AddOn)));
+		return EFlowForEachAddOnFunctionReturnValue::Continue;
+	}, EFlowForEachAddOnChildRule::ImmediateChildrenOnly);
+	if (AddOnsArray.Num())
+	{
+		NodeJson->SetArrayField(TEXT("AddOns"), AddOnsArray);
+	}
+
+	return NodeJson;
+}
+
+FString UFlowAsset::FlowAssetToJSON() const
+{
+	TSharedPtr<FJsonObject> RootJson = MakeShared<FJsonObject>();
+
+	auto GraphVariablesProp = GetClass()->FindPropertyByName(GET_MEMBER_NAME_CHECKED(UFlowAsset, GraphVariables));
+	RootJson->SetField(TEXT("GraphVariables"), FJsonObjectConverter::UPropertyToJsonValue(GraphVariablesProp, GraphVariablesProp->ContainerPtrToValuePtr<void>(this)));
+
+	// Serialize Nodes
+	TArray<TSharedPtr<FJsonValue>> NodesArray;
+	TArray<const UFlowNode*> NodeList;
+	for (const auto& NodePair : GetNodes())
+	{
+		if (NodePair.Value)
+		{
+			NodesArray.Add(MakeShared<FJsonValueObject>(SerializeNode(NodePair.Value)));
+			NodeList.Add(NodePair.Value);
+		}
+	}
+	RootJson->SetArrayField(TEXT("Nodes"), NodesArray);
+
+	// Serialize Edges
+	TArray<TSharedPtr<FJsonValue>> EdgesArray;
+	// Build a map from node pointer to index for edge serialization
+	TMap<const UFlowNode*, int32> NodeToIndex;
+	for (int32 i = 0; i < NodeList.Num(); ++i)
+	{
+		NodeToIndex.Add(NodeList[i], i);
+	}
+
+	for (int32 SourceIdx = 0; SourceIdx < NodeList.Num(); ++SourceIdx)
+	{
+		const UFlowNode* SourceNode = NodeList[SourceIdx];
+		for (int32 OutputPinIdx = 0; OutputPinIdx < SourceNode->GetOutputPins().Num(); ++OutputPinIdx)
+		{
+			const FFlowPin& OutputPin = SourceNode->GetOutputPins()[OutputPinIdx];
+			const TArray<FConnectedPin> Connections = SourceNode->GetOutputConnections(OutputPin.PinName);
+
+			for (const FConnectedPin& Conn : Connections)
+			{
+				const UFlowNode* TargetNode = GetNode(Conn.NodeGuid);
+				if (TargetNode)
+				{
+					TSharedPtr<FJsonObject> EdgeObj = MakeShared<FJsonObject>();
+					EdgeObj->SetStringField(TEXT("From"), SourceNode->GetName());
+					EdgeObj->SetStringField(TEXT("FromPin"), OutputPin.PinName.ToString());
+					EdgeObj->SetStringField(TEXT("To"), TargetNode->GetName());
+					EdgeObj->SetStringField(TEXT("ToPin"), Conn.PinName.ToString());
+
+					EdgesArray.Add(MakeShared<FJsonValueObject>(EdgeObj));
+				}
+			}
+		}
+	}
+	RootJson->SetArrayField(TEXT("Edges"), EdgesArray);
+
+	FString OutputString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+	FJsonSerializer::Serialize(RootJson.ToSharedRef(), Writer);
+	return OutputString;
+
+}
+
+UFlowNodeAddOn* UFlowAsset::DeserializeAddOn(const TSharedPtr<FJsonObject>& AddOnJson, UObject* Outer)
+{
+	FString AddOnType;
+	if (!AddOnJson->TryGetStringField(TEXT("Type"), AddOnType))
+	{
+		return nullptr;
+	}
+
+	UClass* AddOnClass = FindFirstObject<UClass>(*AddOnType);
+	if (!AddOnClass || !AddOnClass->IsChildOf(UFlowNodeAddOn::StaticClass()))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to find UClass for AddOn type %s"), *AddOnType);
+		return nullptr;
+	}
+
+	UFlowNodeAddOn* AddOn = NewObject<UFlowNodeAddOn>(Outer, AddOnClass, NAME_None, RF_Transactional);
+
+	// Deserialize editable properties
+	const TArray<TSharedPtr<FJsonValue>>* PropertiesArrayPtr;
+	if (AddOnJson->TryGetArrayField(TEXT("Properties"), PropertiesArrayPtr))
+	{
+		for (const TSharedPtr<FJsonValue>& PropValue : *PropertiesArrayPtr)
+		{
+			const TSharedPtr<FJsonObject>* PropJsonPtr;
+			if (PropValue->TryGetObject(PropJsonPtr))
+			{
+				for (const auto& PropPair : (*PropJsonPtr)->Values)
+				{
+					FProperty* Property = AddOnClass->FindPropertyByName(FName(*PropPair.Key));
+					if (Property)
+					{
+						FJsonObjectConverter::JsonValueToUProperty(
+							PropPair.Value,
+							Property,
+							Property->ContainerPtrToValuePtr<void>(AddOn),
+							0, 0
+						);
+					}
+				}
+			}
+		}
+	}
+
+	// Recursively deserialize child AddOns
+	const TArray<TSharedPtr<FJsonValue>>* AddOnsArrayPtr;
+	if (AddOnJson->TryGetArrayField(TEXT("AddOns"), AddOnsArrayPtr))
+	{
+		for (const TSharedPtr<FJsonValue>& ChildAddOnValue : *AddOnsArrayPtr)
+		{
+			const TSharedPtr<FJsonObject>* ChildAddOnJsonPtr;
+			if (ChildAddOnValue->TryGetObject(ChildAddOnJsonPtr))
+			{
+				UFlowNodeAddOn* ChildAddOn = DeserializeAddOn(*ChildAddOnJsonPtr, AddOn);
+				if (ChildAddOn)
+				{
+					// Attach child AddOn to parent AddOn
+					AddOn->AddOns.Add(ChildAddOn); // You may need to implement this method if not present
+				}
+			}
+		}
+	}
+
+	return AddOn;
+}
+
+UFlowNode* UFlowAsset::DeserializeNode(const TSharedPtr<FJsonObject>& NodeJson, UFlowAsset* AssetOuter)
+{
+	FString NodeName, NodeType;
+	NodeJson->TryGetStringField(TEXT("Name"), NodeName);
+	NodeJson->TryGetStringField(TEXT("Type"), NodeType);
+
+	// Find UClass for NodeType
+	UClass* NodeClass = FindFirstObject<UClass>(*NodeType);
+	if (!NodeClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to find UClass for %s"), *NodeType);
+		return nullptr;
+	}
+
+	// Create node instance
+	UFlowNode* Node = NewObject<UFlowNode>(AssetOuter, NodeClass, *NodeName, RF_Transient);
+
+	// Deserialize editable properties
+	const TArray<TSharedPtr<FJsonValue>>* PropertiesArrayPtr;
+	if (NodeJson->TryGetArrayField(TEXT("Properties"), PropertiesArrayPtr))
+	{
+		for (const TSharedPtr<FJsonValue>& PropValue : *PropertiesArrayPtr)
+		{
+			const TSharedPtr<FJsonObject>* PropJsonPtr;
+			if (PropValue->TryGetObject(PropJsonPtr))
+			{
+				for (const auto& PropPair : (*PropJsonPtr)->Values)
+				{
+					FProperty* Property = NodeClass->FindPropertyByName(FName(*PropPair.Key));
+					if (Property)
+					{
+						FJsonObjectConverter::JsonValueToUProperty(
+							PropPair.Value,
+							Property,
+							Property->ContainerPtrToValuePtr<void>(Node),
+							0, 0
+						);
+					}
+				}
+			}
+		}
+	}
+
+	// Deserialize AddOns
+	const TArray<TSharedPtr<FJsonValue>>* AddOnsArrayPtr;
+	if (NodeJson->TryGetArrayField(TEXT("AddOns"), AddOnsArrayPtr))
+	{
+		for (const TSharedPtr<FJsonValue>& AddOnValue : *AddOnsArrayPtr)
+		{
+			const TSharedPtr<FJsonObject>* AddOnJsonPtr;
+			if (AddOnValue->TryGetObject(AddOnJsonPtr))
+			{
+				UFlowNodeAddOn* AddOn = UFlowAsset::DeserializeAddOn(*AddOnJsonPtr, Node);
+				if (AddOn)
+				{
+					Node->AddOns.Add(AddOn); // You may need to implement this method if not present
+				}
+			}
+		}
+	}
+
+	return Node;
+}
+
+UFlowAsset* UFlowAsset::FlowAssetFromJSON(const FString& JsonString)
+{
+	TSharedPtr<FJsonObject> RootJson;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+	if (!FJsonSerializer::Deserialize(Reader, RootJson) || !RootJson.IsValid())
+	{
+		return nullptr;
+	}
+
+	// Create new FlowAsset
+	UFlowAsset* FlowAsset = NewObject<UFlowAsset>(GetTransientPackage(), NAME_None, RF_Transient);
+
+	// --- Deserialize GraphVariables ---
+	if (TSharedPtr<FJsonValue> GraphVarsJson = RootJson->TryGetField(TEXT("GraphVariables")))
+	{
+		auto GraphVariablesProp = FlowAsset->GetClass()->FindPropertyByName(GET_MEMBER_NAME_CHECKED(UFlowAsset, GraphVariables));
+		bool bSuccess = FJsonObjectConverter::JsonValueToUProperty(GraphVarsJson, GraphVariablesProp, GraphVariablesProp->ContainerPtrToValuePtr<void>(FlowAsset));
+		if (!bSuccess)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Failed to deserialize UFlowAsset::GraphVariables"));
+		}
+	}
+
+	// --- Deserialize Nodes ---
+	const TArray<TSharedPtr<FJsonValue>>* NodesArrayPtr;
+	TMap<FString, UFlowNode*> NameToNode;
+	if (RootJson->TryGetArrayField(TEXT("Nodes"), NodesArrayPtr))
+	{
+		for (const TSharedPtr<FJsonValue>& NodeValue : *NodesArrayPtr)
+		{
+			const TSharedPtr<FJsonObject>* NodeJsonPtr;
+			if (NodeValue->TryGetObject(NodeJsonPtr))
+			{
+				UFlowNode* Node = DeserializeNode(*NodeJsonPtr, FlowAsset);
+				if (!Node) continue;
+
+				FGuid NodeGuid = FGuid::NewGuid();
+				Node->SetGuid(NodeGuid);
+				FlowAsset->Nodes.Add(NodeGuid, Node);
+
+				NameToNode.Add(Node->GetName(), Node);
+			}
+		}
+	}
+
+	// --- Deserialize Edges ---
+	const TArray<TSharedPtr<FJsonValue>>* EdgesArrayPtr;
+	if (RootJson->TryGetArrayField(TEXT("Edges"), EdgesArrayPtr))
+	{
+		for (const TSharedPtr<FJsonValue>& EdgeValue : *EdgesArrayPtr)
+		{
+			const TSharedPtr<FJsonObject>* EdgeObjPtr;
+			if (EdgeValue->TryGetObject(EdgeObjPtr))
+			{
+				FString FromName, FromPin, ToName, ToPin;
+				(*EdgeObjPtr)->TryGetStringField(TEXT("From"), FromName);
+				(*EdgeObjPtr)->TryGetStringField(TEXT("FromPin"), FromPin);
+				(*EdgeObjPtr)->TryGetStringField(TEXT("To"), ToName);
+				(*EdgeObjPtr)->TryGetStringField(TEXT("ToPin"), ToPin);
+
+				UFlowNode* SourceNode = NameToNode.FindRef(FromName);
+				UFlowNode* TargetNode = NameToNode.FindRef(ToName);
+
+				if (SourceNode && TargetNode)
+				{
+					// Connect SourceNode's OutputPin to TargetNode's InputPin
+					FConnectedPin Conn(TargetNode->GetGuid(), FName(*ToPin));
+					FPinConnectionList& OutList = SourceNode->OutputConnections.FindOrAdd(FName(*FromPin));
+					OutList.Connections.Add(Conn);
+
+					SourceNode->Modify();
+
+					// Set input connection on target node
+					TargetNode->InputConnections.Add(FName(*ToPin), FConnectedPin(SourceNode->GetGuid(), FName(*FromPin)));
+					TargetNode->Modify();
+				}
+			}
+		}
+	}
+
+
+#if WITH_EDITOR
+	if (IFlowEditorModuleInterface* Extension = FModuleManager::Get().LoadModulePtr<IFlowEditorModuleInterface>(TEXT("FlowEditor")))
+	{
+		Extension->DeserializeEdGraphFromJSON(FlowAsset, RootJson);
+	}
+#endif
+
+
+	FFlowMessageLog LogResults;
+	FlowAsset->ValidateAsset(LogResults);
+    for (const auto& Message : LogResults.Messages)
+    {
+    	UE_LOG(LogTemp, Warning, TEXT("%s"), *Message->ToText().ToString());
+    }
+	return FlowAsset;
+}

@@ -88,6 +88,9 @@ public:
 	FLOW_API void RequestReconstructionOnOwningFlowNode() const;
 #endif // WITH_EDITOR
 
+	const TArray<FFlowPin>& GetInputPins() const { return InputPins; }
+	// const TArray<FFlowPin>& GetOutputPins() const { return OutputPins; }
+
 protected:
 	void CacheFlowNode();
 
