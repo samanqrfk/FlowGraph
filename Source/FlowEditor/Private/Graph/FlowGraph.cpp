@@ -468,33 +468,31 @@ void UFlowGraph::RecursivelySetupAllFlowGraphNodesForEditing(UFlowGraphNode& Fro
 	}
 }
 
-void FFlowEditorModule::DeserializeEdGraphFromJSON(UFlowAsset* FlowAsset, TSharedPtr<FJsonObject> RootJson)
+void FFlowEditorModule::DeserializeEdGraphFromJSON(UFlowAsset* FlowAsset, TSharedPtr<FJsonObject> RootJson, EFlowAssetJSONSerializationMode Mode)
 {
 	FlowAsset->FlowGraph = CastChecked<UFlowGraph>(FBlueprintEditorUtils::CreateNewGraph(FlowAsset, NAME_None, UFlowGraph::StaticClass(), UFlowGraphSchema::StaticClass()));
 
-	TMap<FString, UFlowNode*> NameToNode;
 	TArray<UFlowNode*> Nodes;
+	TMap<FString, UFlowNode*> NameToNode;
 	for (auto& Pair : FlowAsset->Nodes)
 	{
 		Nodes.Add(Pair.Value);
-		NameToNode.Add(Pair.Value.GetName(), Pair.Value);
+		if (Mode == EFlowAssetJSONSerializationMode::Verbose)
+		{
+			NameToNode.Add(Pair.Value->GetName(), Pair.Value);
+		}
 	}
 
 	// Create UEdGraphNode for each UFlowNode and set up mapping
 	TMap<UFlowNode*, UEdGraphNode*> NodeToGraphNode;
 	for (UFlowNode* Node : Nodes)
 	{
-		// create new Flow Graph node
 		const TSubclassOf<UEdGraphNode> GraphNodeClass = UFlowGraphSchema::GetAssignedGraphNodeClass(Node->GetClass());
-
-		// Create a new UEdGraphNode (use your custom node class if needed)
 		UFlowGraphNode* GraphNode = NewObject<UFlowGraphNode>(FlowAsset->FlowGraph, GraphNodeClass, NAME_None, RF_Transient);
 
-		// register to the graph
 		GraphNode->NodeGuid = Node->GetGuid();
 		FlowAsset->FlowGraph->Nodes.Add(GraphNode);
 
-		// Link the FlowNode to its GraphNode and vice versa
 		Node->SetGraphNode(GraphNode);
 		GraphNode->SetNodeTemplate(Node);
 		NodeToGraphNode.Add(Node, GraphNode);
@@ -504,60 +502,164 @@ void FFlowEditorModule::DeserializeEdGraphFromJSON(UFlowAsset* FlowAsset, TShare
 	const TArray<TSharedPtr<FJsonValue>>* EdgesArrayPtr;
 	if (RootJson->TryGetArrayField(TEXT("Edges"), EdgesArrayPtr))
 	{
-		for (const TSharedPtr<FJsonValue>& EdgeValue : *EdgesArrayPtr)
+		if (Mode == EFlowAssetJSONSerializationMode::Minimal)
 		{
-			const TSharedPtr<FJsonObject>* EdgeObjPtr;
-			if (EdgeValue->TryGetObject(EdgeObjPtr))
+			// Build pin name maps for each node
+			TArray<TArray<FName>> NodeInputPinNames;
+			TArray<TArray<FName>> NodeOutputPinNames;
+			for (UFlowNode* Node : Nodes)
 			{
-				FString FromName, FromPin, ToName, ToPin;
-				(*EdgeObjPtr)->TryGetStringField(TEXT("From"), FromName);
-				(*EdgeObjPtr)->TryGetStringField(TEXT("FromPin"), FromPin);
-				(*EdgeObjPtr)->TryGetStringField(TEXT("To"), ToName);
-				(*EdgeObjPtr)->TryGetStringField(TEXT("ToPin"), ToPin);
-
-				UFlowNode* SourceNode = NameToNode.FindRef(FromName);
-				UFlowNode* TargetNode = NameToNode.FindRef(ToName);
-
-				UEdGraphNode* SourceGraphNode = NodeToGraphNode.FindRef(SourceNode);
-				UEdGraphNode* TargetGraphNode = NodeToGraphNode.FindRef(TargetNode);
-
-				if (SourceGraphNode && TargetGraphNode)
+				TArray<FName> InputPins, OutputPins;
+				for (const FFlowPin& Pin : Node->GetInputPins())
 				{
-					// Create pins if not present (minimal, for connection only)
-					UEdGraphPin* SourcePin = nullptr;
-					UEdGraphPin* TargetPin = nullptr;
+					InputPins.Add(Pin.PinName);
+				}
+				for (const FFlowPin& Pin : Node->GetOutputPins())
+				{
+					OutputPins.Add(Pin.PinName);
+				}
+				NodeInputPinNames.Add(InputPins);
+				NodeOutputPinNames.Add(OutputPins);
+			}
 
-					// Find or create output pin on source
-					for (UEdGraphPin* Pin : SourceGraphNode->Pins)
+			for (const TSharedPtr<FJsonValue>& EdgeValue : *EdgesArrayPtr)
+			{
+				const TArray<TSharedPtr<FJsonValue>>* EdgeArrayPtr;
+				if (EdgeValue->TryGetArray(EdgeArrayPtr) && EdgeArrayPtr->Num() == 2)
+				{
+					FString SourceStr, TargetStr;
+					(*EdgeArrayPtr)[0]->TryGetString(SourceStr);
+					(*EdgeArrayPtr)[1]->TryGetString(TargetStr);
+
+					int32 SourceNodeIdx = 0, SourcePinIdx = 0, TargetNodeIdx = 0, TargetPinIdx = 0;
 					{
-						if (Pin->PinName == FName(*FromPin) && Pin->Direction == EGPD_Output)
+						TArray<FString> Parts;
+						SourceStr.ParseIntoArray(Parts, TEXT("."));
+						if (Parts.Num() == 2)
 						{
-							SourcePin = Pin;
-							break;
+							SourceNodeIdx = FCString::Atoi(*Parts[0]);
+							SourcePinIdx = FCString::Atoi(*Parts[1]);
 						}
 					}
-					if (!SourcePin)
 					{
-						SourcePin = SourceGraphNode->CreatePin(EGPD_Output, NAME_None, FName(*FromPin));
-					}
-
-					// Find or create input pin on target
-					for (UEdGraphPin* Pin : TargetGraphNode->Pins)
-					{
-						if (Pin->PinName == FName(*ToPin) && Pin->Direction == EGPD_Input)
+						TArray<FString> Parts;
+						TargetStr.ParseIntoArray(Parts, TEXT("."));
+						if (Parts.Num() == 2)
 						{
-							TargetPin = Pin;
-							break;
+							TargetNodeIdx = FCString::Atoi(*Parts[0]);
+							TargetPinIdx = FCString::Atoi(*Parts[1]);
 						}
 					}
-					if (!TargetPin)
-					{
-						TargetPin = TargetGraphNode->CreatePin(EGPD_Input, NAME_None, FName(*ToPin));
-					}
 
-					// Link pins
-					SourcePin->LinkedTo.Add(TargetPin);
-					TargetPin->LinkedTo.Add(SourcePin);
+					if (Nodes.IsValidIndex(SourceNodeIdx) && Nodes.IsValidIndex(TargetNodeIdx) &&
+						NodeOutputPinNames[SourceNodeIdx].IsValidIndex(SourcePinIdx) &&
+						NodeInputPinNames[TargetNodeIdx].IsValidIndex(TargetPinIdx))
+					{
+						UFlowNode* SourceNode = Nodes[SourceNodeIdx];
+						UFlowNode* TargetNode = Nodes[TargetNodeIdx];
+						FName FromPin = NodeOutputPinNames[SourceNodeIdx][SourcePinIdx];
+						FName ToPin = NodeInputPinNames[TargetNodeIdx][TargetPinIdx];
+
+						UEdGraphNode* SourceGraphNode = NodeToGraphNode.FindRef(SourceNode);
+						UEdGraphNode* TargetGraphNode = NodeToGraphNode.FindRef(TargetNode);
+
+						if (SourceGraphNode && TargetGraphNode)
+						{
+							UEdGraphPin* SourcePin = nullptr;
+							UEdGraphPin* TargetPin = nullptr;
+
+							// Find or create output pin on source
+							for (UEdGraphPin* Pin : SourceGraphNode->Pins)
+							{
+								if (Pin->PinName == FromPin && Pin->Direction == EGPD_Output)
+								{
+									SourcePin = Pin;
+									break;
+								}
+							}
+							if (!SourcePin)
+							{
+								SourcePin = SourceGraphNode->CreatePin(EGPD_Output, NAME_None, FromPin);
+							}
+
+							// Find or create input pin on target
+							for (UEdGraphPin* Pin : TargetGraphNode->Pins)
+							{
+								if (Pin->PinName == ToPin && Pin->Direction == EGPD_Input)
+								{
+									TargetPin = Pin;
+									break;
+								}
+							}
+							if (!TargetPin)
+							{
+								TargetPin = TargetGraphNode->CreatePin(EGPD_Input, NAME_None, ToPin);
+							}
+
+							// Link pins
+							SourcePin->LinkedTo.Add(TargetPin);
+							TargetPin->LinkedTo.Add(SourcePin);
+						}
+					}
+				}
+			}
+		}
+		else // Verbose
+		{
+			for (const TSharedPtr<FJsonValue>& EdgeValue : *EdgesArrayPtr)
+			{
+				const TSharedPtr<FJsonObject>* EdgeObjPtr;
+				if (EdgeValue->TryGetObject(EdgeObjPtr))
+				{
+					FString FromName, FromPin, ToName, ToPin;
+					(*EdgeObjPtr)->TryGetStringField(TEXT("From"), FromName);
+					(*EdgeObjPtr)->TryGetStringField(TEXT("FromPin"), FromPin);
+					(*EdgeObjPtr)->TryGetStringField(TEXT("To"), ToName);
+					(*EdgeObjPtr)->TryGetStringField(TEXT("ToPin"), ToPin);
+
+					UFlowNode* SourceNode = NameToNode.FindRef(FromName);
+					UFlowNode* TargetNode = NameToNode.FindRef(ToName);
+
+					UEdGraphNode* SourceGraphNode = NodeToGraphNode.FindRef(SourceNode);
+					UEdGraphNode* TargetGraphNode = NodeToGraphNode.FindRef(TargetNode);
+
+					if (SourceGraphNode && TargetGraphNode)
+					{
+						UEdGraphPin* SourcePin = nullptr;
+						UEdGraphPin* TargetPin = nullptr;
+
+						// Find or create output pin on source
+						for (UEdGraphPin* Pin : SourceGraphNode->Pins)
+						{
+							if (Pin->PinName == FName(*FromPin) && Pin->Direction == EGPD_Output)
+							{
+								SourcePin = Pin;
+								break;
+							}
+						}
+						if (!SourcePin)
+						{
+							SourcePin = SourceGraphNode->CreatePin(EGPD_Output, NAME_None, FName(*FromPin));
+						}
+
+						// Find or create input pin on target
+						for (UEdGraphPin* Pin : TargetGraphNode->Pins)
+						{
+							if (Pin->PinName == FName(*ToPin) && Pin->Direction == EGPD_Input)
+							{
+								TargetPin = Pin;
+								break;
+							}
+						}
+						if (!TargetPin)
+						{
+							TargetPin = TargetGraphNode->CreatePin(EGPD_Input, NAME_None, FName(*ToPin));
+						}
+
+						// Link pins
+						SourcePin->LinkedTo.Add(TargetPin);
+						TargetPin->LinkedTo.Add(SourcePin);
+					}
 				}
 			}
 		}

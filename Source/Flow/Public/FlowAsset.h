@@ -28,6 +28,13 @@ DECLARE_EVENT(UFlowAsset, FFlowGraphEvent);
 DECLARE_DELEGATE_TwoParams(FFlowSignalEvent, const FGuid& /*NodeGuid*/, const FName& /*PinName*/);
 #endif
 
+UENUM()
+enum class EFlowAssetJSONSerializationMode : uint8
+{
+	Verbose,
+	Minimal
+};
+
 /**
  * Single asset containing flow nodes.
  */
@@ -401,17 +408,17 @@ public:
 	const TArray<UFlowNode*>& GetRecordedNodes() const { return RecordedNodes; }
 
 	UFUNCTION(BlueprintPure, Category = "Flow")
-	FString FlowAssetToJSON() const;
+	FString FlowAssetToJSON(EFlowAssetJSONSerializationMode Mode) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Flow")
-	static UFlowAsset* FlowAssetFromJSON(const FString& InJson);
+	static UFlowAsset* FlowAssetFromJSON(const FString& InJson, EFlowAssetJSONSerializationMode Mode);
 
 private:
-	static TSharedPtr<FJsonObject> SerializeNode(const UFlowNode* Node);
-	static TSharedPtr<FJsonObject> SerializeAddOn(const UFlowNodeAddOn* AddOn);
+	static TSharedPtr<FJsonObject> SerializeNode(const UFlowNode* Node, EFlowAssetJSONSerializationMode Mode);
+	static TSharedPtr<FJsonObject> SerializeAddOn(const UFlowNodeAddOn* AddOn, EFlowAssetJSONSerializationMode Mode);
 
-	static UFlowNode* DeserializeNode(const TSharedPtr<FJsonObject>& NodeJson, UFlowAsset* AssetOuter);
-	static UFlowNodeAddOn* DeserializeAddOn(const TSharedPtr<FJsonObject>& AddOnJson, UObject* Outer);
+	static UFlowNode* DeserializeNode(const TSharedPtr<FJsonObject>& NodeJson, UFlowAsset* AssetOuter, EFlowAssetJSONSerializationMode Mode);
+	static UFlowNodeAddOn* DeserializeAddOn(const TSharedPtr<FJsonObject>& AddOnJson, UObject* Outer, EFlowAssetJSONSerializationMode Mode);
 
 	//////////////////////////////////////////////////////////////////////////
 	// Expected Owner Class support (for use with CallOwnerFunction nodes)

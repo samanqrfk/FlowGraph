@@ -1185,22 +1185,38 @@ void UFlowAsset::LogNote(const FString& MessageToLog, const UFlowNodeBase* Node)
 }
 #endif
 
-TSharedPtr<FJsonObject> UFlowAsset::SerializeAddOn(const UFlowNodeAddOn* AddOn)
+TSharedPtr<FJsonObject> UFlowAsset::SerializeAddOn(const UFlowNodeAddOn* AddOn, EFlowAssetJSONSerializationMode Mode)
 {
 	TSharedPtr<FJsonObject> AddOnJson = MakeShared<FJsonObject>();
 
+	// serialize type
 	AddOnJson->SetStringField(TEXT("Type"), AddOn->GetClass()->GetName());
 
-	// Input pins
-	TArray<TSharedPtr<FJsonValue>> InputNames;
-	for (const FFlowPin& Pin : AddOn->GetInputPins())
+	if (Mode == EFlowAssetJSONSerializationMode::Verbose)
 	{
-		InputNames.Add(MakeShared<FJsonValueString>(Pin.PinName.ToString()));
-	}
-	AddOnJson->SetArrayField(TEXT("InputPins"), InputNames);
+		// Input pins
+		TArray<TSharedPtr<FJsonValue>> InputNames;
+		for (const FFlowPin& Pin : AddOn->GetInputPins())
+		{
+			InputNames.Add(MakeShared<FJsonValueString>(Pin.PinName.ToString()));
+		}
+		AddOnJson->SetArrayField(TEXT("InputPins"), InputNames);
 
-	// Output pins
-	// todo: addon output pins is editor only?
+		// Output pins
+		//TArray<TSharedPtr<FJsonValue>> OutputNames;
+		//for (const FFlowPin& Pin : AddOn->GetOutputPins())
+		//{
+		//	OutputNames.Add(MakeShared<FJsonValueString>(Pin.PinName.ToString()));
+		//}
+		//AddOnJson->SetArrayField(TEXT("OutputPins"), OutputNames);
+	}
+	else if (Mode == EFlowAssetJSONSerializationMode::Minimal)
+	{
+		// In Minimal mode, NumPins field as "NumInputs.NumOutputs"
+		const int32 NumInputs = AddOn->GetInputPins().Num();
+		const int32 NumOutputs = 0;//AddOn->GetOutputPins().Num();
+		AddOnJson->SetStringField(TEXT("NumPins"), FString::Printf(TEXT("%d.%d"), NumInputs, NumOutputs));
+	}
 
 	// Serialize editable, non-editor-only properties (excluding UFlowNodeBase and its parents)
 	TArray<TSharedPtr<FJsonValue>> PropertiesArray;
@@ -1228,9 +1244,9 @@ TSharedPtr<FJsonObject> UFlowAsset::SerializeAddOn(const UFlowNodeAddOn* AddOn)
 
 	// Serialize AddOns
 	TArray<TSharedPtr<FJsonValue>> AddOnsArray;
-	AddOn->ForEachAddOnConst([&AddOnsArray](const UFlowNodeAddOn& AddOn)
+	AddOn->ForEachAddOnConst([&AddOnsArray, Mode](const UFlowNodeAddOn& ChildAddOn)
 	{
-		AddOnsArray.Add(MakeShared<FJsonValueObject>(SerializeAddOn(&AddOn)));
+		AddOnsArray.Add(MakeShared<FJsonValueObject>(SerializeAddOn(&ChildAddOn, Mode)));
 		return EFlowForEachAddOnFunctionReturnValue::Continue;
 	}, EFlowForEachAddOnChildRule::ImmediateChildrenOnly);
 	if (AddOnsArray.Num())
@@ -1241,28 +1257,41 @@ TSharedPtr<FJsonObject> UFlowAsset::SerializeAddOn(const UFlowNodeAddOn* AddOn)
 	return AddOnJson;
 }
 
-TSharedPtr<FJsonObject> UFlowAsset::SerializeNode(const UFlowNode* Node)
+TSharedPtr<FJsonObject> UFlowAsset::SerializeNode(const UFlowNode* Node, EFlowAssetJSONSerializationMode Mode)
 {
 	TSharedPtr<FJsonObject> NodeJson = MakeShared<FJsonObject>();
 
-	NodeJson->SetStringField(TEXT("Name"), Node->GetName());
+	// Always serialize type
 	NodeJson->SetStringField(TEXT("Type"), Node->GetClass()->GetName());
 
-	// Input pins
-	TArray<TSharedPtr<FJsonValue>> InputNames;
-	for (const FFlowPin& Pin : Node->GetInputPins())
+	// Serialize name only in Verbose mode
+	if (Mode == EFlowAssetJSONSerializationMode::Verbose)
 	{
-		InputNames.Add(MakeShared<FJsonValueString>(Pin.PinName.ToString()));
-	}
-	NodeJson->SetArrayField(TEXT("InputPins"), InputNames);
+		NodeJson->SetStringField(TEXT("Name"), Node->GetName());
 
-	// Output pins
-	TArray<TSharedPtr<FJsonValue>> OutputNames;
-	for (const FFlowPin& Pin : Node->GetOutputPins())
-	{
-		OutputNames.Add(MakeShared<FJsonValueString>(Pin.PinName.ToString()));
+		// Input pins
+		TArray<TSharedPtr<FJsonValue>> InputNames;
+		for (const FFlowPin& Pin : Node->GetInputPins())
+		{
+			InputNames.Add(MakeShared<FJsonValueString>(Pin.PinName.ToString()));
+		}
+		NodeJson->SetArrayField(TEXT("InputPins"), InputNames);
+
+		// Output pins
+		TArray<TSharedPtr<FJsonValue>> OutputNames;
+		for (const FFlowPin& Pin : Node->GetOutputPins())
+		{
+			OutputNames.Add(MakeShared<FJsonValueString>(Pin.PinName.ToString()));
+		}
+		NodeJson->SetArrayField(TEXT("OutputPins"), OutputNames);
 	}
-	NodeJson->SetArrayField(TEXT("OutputPins"), OutputNames);
+	else if (Mode == EFlowAssetJSONSerializationMode::Minimal)
+	{
+		// In Minimal mode, NumPins field as "NumInputs.NumOutputs"
+		const int32 NumInputs = Node->GetInputPins().Num();
+		const int32 NumOutputs = Node->GetOutputPins().Num();
+		NodeJson->SetStringField(TEXT("NumPins"), FString::Printf(TEXT("%d.%d"), NumInputs, NumOutputs));
+	}
 
 	// Editable properties (excluding UFlowNode and its parents)
 	TArray<TSharedPtr<FJsonValue>> PropertiesArray;
@@ -1290,9 +1319,9 @@ TSharedPtr<FJsonObject> UFlowAsset::SerializeNode(const UFlowNode* Node)
 
 	// Serialize AddOns
 	TArray<TSharedPtr<FJsonValue>> AddOnsArray;
-	Node->ForEachAddOnConst([&AddOnsArray](const UFlowNodeAddOn& AddOn)
+	Node->ForEachAddOnConst([&AddOnsArray, Mode](const UFlowNodeAddOn& AddOn)
 	{
-		AddOnsArray.Add(MakeShared<FJsonValueObject>(SerializeAddOn(&AddOn)));
+		AddOnsArray.Add(MakeShared<FJsonValueObject>(SerializeAddOn(&AddOn, Mode)));
 		return EFlowForEachAddOnFunctionReturnValue::Continue;
 	}, EFlowForEachAddOnChildRule::ImmediateChildrenOnly);
 	if (AddOnsArray.Num())
@@ -1303,7 +1332,7 @@ TSharedPtr<FJsonObject> UFlowAsset::SerializeNode(const UFlowNode* Node)
 	return NodeJson;
 }
 
-FString UFlowAsset::FlowAssetToJSON() const
+FString UFlowAsset::FlowAssetToJSON(EFlowAssetJSONSerializationMode Mode) const
 {
 	TSharedPtr<FJsonObject> RootJson = MakeShared<FJsonObject>();
 
@@ -1317,7 +1346,7 @@ FString UFlowAsset::FlowAssetToJSON() const
 	{
 		if (NodePair.Value)
 		{
-			NodesArray.Add(MakeShared<FJsonValueObject>(SerializeNode(NodePair.Value)));
+			NodesArray.Add(MakeShared<FJsonValueObject>(SerializeNode(NodePair.Value, Mode)));
 			NodeList.Add(NodePair.Value);
 		}
 	}
@@ -1325,33 +1354,75 @@ FString UFlowAsset::FlowAssetToJSON() const
 
 	// Serialize Edges
 	TArray<TSharedPtr<FJsonValue>> EdgesArray;
-	// Build a map from node pointer to index for edge serialization
 	TMap<const UFlowNode*, int32> NodeToIndex;
 	for (int32 i = 0; i < NodeList.Num(); ++i)
 	{
 		NodeToIndex.Add(NodeList[i], i);
 	}
 
-	for (int32 SourceIdx = 0; SourceIdx < NodeList.Num(); ++SourceIdx)
+	if (Mode == EFlowAssetJSONSerializationMode::Minimal)
 	{
-		const UFlowNode* SourceNode = NodeList[SourceIdx];
-		for (int32 OutputPinIdx = 0; OutputPinIdx < SourceNode->GetOutputPins().Num(); ++OutputPinIdx)
+		// Minimal: [ "0.0", "1.0" ]
+		for (int32 SourceIdx = 0; SourceIdx < NodeList.Num(); ++SourceIdx)
 		{
-			const FFlowPin& OutputPin = SourceNode->GetOutputPins()[OutputPinIdx];
-			const TArray<FConnectedPin> Connections = SourceNode->GetOutputConnections(OutputPin.PinName);
-
-			for (const FConnectedPin& Conn : Connections)
+			const UFlowNode* SourceNode = NodeList[SourceIdx];
+			for (int32 OutputPinIdx = 0; OutputPinIdx < SourceNode->GetOutputPins().Num(); ++OutputPinIdx)
 			{
-				const UFlowNode* TargetNode = GetNode(Conn.NodeGuid);
-				if (TargetNode)
-				{
-					TSharedPtr<FJsonObject> EdgeObj = MakeShared<FJsonObject>();
-					EdgeObj->SetStringField(TEXT("From"), SourceNode->GetName());
-					EdgeObj->SetStringField(TEXT("FromPin"), OutputPin.PinName.ToString());
-					EdgeObj->SetStringField(TEXT("To"), TargetNode->GetName());
-					EdgeObj->SetStringField(TEXT("ToPin"), Conn.PinName.ToString());
+				const FFlowPin& OutputPin = SourceNode->GetOutputPins()[OutputPinIdx];
+				const TArray<FConnectedPin> Connections = SourceNode->GetOutputConnections(OutputPin.PinName);
 
-					EdgesArray.Add(MakeShared<FJsonValueObject>(EdgeObj));
+				for (const FConnectedPin& Conn : Connections)
+				{
+					const UFlowNode* TargetNode = GetNode(Conn.NodeGuid);
+					int32 TargetIdx = NodeList.IndexOfByKey(TargetNode);
+					if (TargetIdx != INDEX_NONE)
+					{
+						// Find input pin index
+						int32 InputPinIdx = -1;
+						const TArray<FFlowPin>& TargetInputPins = TargetNode->GetInputPins();
+						for (int32 i = 0; i < TargetInputPins.Num(); ++i)
+						{
+							if (TargetInputPins[i].PinName == Conn.PinName)
+							{
+								InputPinIdx = i;
+								break;
+							}
+						}
+						if (InputPinIdx != -1)
+						{
+							TArray<TSharedPtr<FJsonValue>> EdgeArray;
+							EdgeArray.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%d.%d"), SourceIdx, OutputPinIdx)));
+							EdgeArray.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%d.%d"), TargetIdx, InputPinIdx)));
+							EdgesArray.Add(MakeShared<FJsonValueArray>(EdgeArray));
+						}
+					}
+				}
+			}
+		}
+	}
+	else // Verbose
+	{
+		for (int32 SourceIdx = 0; SourceIdx < NodeList.Num(); ++SourceIdx)
+		{
+			const UFlowNode* SourceNode = NodeList[SourceIdx];
+			for (int32 OutputPinIdx = 0; OutputPinIdx < SourceNode->GetOutputPins().Num(); ++OutputPinIdx)
+			{
+				const FFlowPin& OutputPin = SourceNode->GetOutputPins()[OutputPinIdx];
+				const TArray<FConnectedPin> Connections = SourceNode->GetOutputConnections(OutputPin.PinName);
+
+				for (const FConnectedPin& Conn : Connections)
+				{
+					const UFlowNode* TargetNode = GetNode(Conn.NodeGuid);
+					if (TargetNode)
+					{
+						TSharedPtr<FJsonObject> EdgeObj = MakeShared<FJsonObject>();
+						EdgeObj->SetStringField(TEXT("From"), SourceNode->GetName());
+						EdgeObj->SetStringField(TEXT("FromPin"), OutputPin.PinName.ToString());
+						EdgeObj->SetStringField(TEXT("To"), TargetNode->GetName());
+						EdgeObj->SetStringField(TEXT("ToPin"), Conn.PinName.ToString());
+
+						EdgesArray.Add(MakeShared<FJsonValueObject>(EdgeObj));
+					}
 				}
 			}
 		}
@@ -1362,10 +1433,9 @@ FString UFlowAsset::FlowAssetToJSON() const
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
 	FJsonSerializer::Serialize(RootJson.ToSharedRef(), Writer);
 	return OutputString;
-
 }
 
-UFlowNodeAddOn* UFlowAsset::DeserializeAddOn(const TSharedPtr<FJsonObject>& AddOnJson, UObject* Outer)
+UFlowNodeAddOn* UFlowAsset::DeserializeAddOn(const TSharedPtr<FJsonObject>& AddOnJson, UObject* Outer, EFlowAssetJSONSerializationMode Mode)
 {
 	FString AddOnType;
 	if (!AddOnJson->TryGetStringField(TEXT("Type"), AddOnType))
@@ -1380,7 +1450,17 @@ UFlowNodeAddOn* UFlowAsset::DeserializeAddOn(const TSharedPtr<FJsonObject>& AddO
 		return nullptr;
 	}
 
-	UFlowNodeAddOn* AddOn = NewObject<UFlowNodeAddOn>(Outer, AddOnClass, NAME_None, RF_Transactional);
+	FName AddOnName = NAME_None;
+	if (Mode == EFlowAssetJSONSerializationMode::Verbose)
+	{
+		FString NameStr;
+		if (AddOnJson->TryGetStringField(TEXT("Name"), NameStr))
+		{
+			AddOnName = FName(*NameStr);
+		}
+	}
+
+	UFlowNodeAddOn* AddOn = NewObject<UFlowNodeAddOn>(Outer, AddOnClass, AddOnName, RF_Transactional);
 
 	// Deserialize editable properties
 	const TArray<TSharedPtr<FJsonValue>>* PropertiesArrayPtr;
@@ -1417,11 +1497,10 @@ UFlowNodeAddOn* UFlowAsset::DeserializeAddOn(const TSharedPtr<FJsonObject>& AddO
 			const TSharedPtr<FJsonObject>* ChildAddOnJsonPtr;
 			if (ChildAddOnValue->TryGetObject(ChildAddOnJsonPtr))
 			{
-				UFlowNodeAddOn* ChildAddOn = DeserializeAddOn(*ChildAddOnJsonPtr, AddOn);
+				UFlowNodeAddOn* ChildAddOn = DeserializeAddOn(*ChildAddOnJsonPtr, AddOn, Mode);
 				if (ChildAddOn)
 				{
-					// Attach child AddOn to parent AddOn
-					AddOn->AddOns.Add(ChildAddOn); // You may need to implement this method if not present
+					AddOn->AddOns.Add(ChildAddOn);
 				}
 			}
 		}
@@ -1430,10 +1509,9 @@ UFlowNodeAddOn* UFlowAsset::DeserializeAddOn(const TSharedPtr<FJsonObject>& AddO
 	return AddOn;
 }
 
-UFlowNode* UFlowAsset::DeserializeNode(const TSharedPtr<FJsonObject>& NodeJson, UFlowAsset* AssetOuter)
+UFlowNode* UFlowAsset::DeserializeNode(const TSharedPtr<FJsonObject>& NodeJson, UFlowAsset* AssetOuter, EFlowAssetJSONSerializationMode Mode)
 {
-	FString NodeName, NodeType;
-	NodeJson->TryGetStringField(TEXT("Name"), NodeName);
+	FString NodeType;
 	NodeJson->TryGetStringField(TEXT("Type"), NodeType);
 
 	// Find UClass for NodeType
@@ -1444,8 +1522,21 @@ UFlowNode* UFlowAsset::DeserializeNode(const TSharedPtr<FJsonObject>& NodeJson, 
 		return nullptr;
 	}
 
+	// Node name only present in Verbose mode
+	FName NodeName;
+	if (Mode == EFlowAssetJSONSerializationMode::Verbose)
+	{
+		FString NodeNameStr;
+		NodeJson->TryGetStringField(TEXT("Name"), NodeNameStr);
+		NodeName = *NodeNameStr;
+	}
+	else
+	{
+		NodeName = NAME_None;
+	}
+
 	// Create node instance
-	UFlowNode* Node = NewObject<UFlowNode>(AssetOuter, NodeClass, *NodeName, RF_Transient);
+	UFlowNode* Node = NewObject<UFlowNode>(AssetOuter, NodeClass, NodeName, RF_Transient);
 
 	// Deserialize editable properties
 	const TArray<TSharedPtr<FJsonValue>>* PropertiesArrayPtr;
@@ -1482,10 +1573,10 @@ UFlowNode* UFlowAsset::DeserializeNode(const TSharedPtr<FJsonObject>& NodeJson, 
 			const TSharedPtr<FJsonObject>* AddOnJsonPtr;
 			if (AddOnValue->TryGetObject(AddOnJsonPtr))
 			{
-				UFlowNodeAddOn* AddOn = UFlowAsset::DeserializeAddOn(*AddOnJsonPtr, Node);
+				UFlowNodeAddOn* AddOn = DeserializeAddOn(*AddOnJsonPtr, Node, Mode);
 				if (AddOn)
 				{
-					Node->AddOns.Add(AddOn); // You may need to implement this method if not present
+					Node->AddOns.Add(AddOn);
 				}
 			}
 		}
@@ -1494,7 +1585,7 @@ UFlowNode* UFlowAsset::DeserializeNode(const TSharedPtr<FJsonObject>& NodeJson, 
 	return Node;
 }
 
-UFlowAsset* UFlowAsset::FlowAssetFromJSON(const FString& JsonString)
+UFlowAsset* UFlowAsset::FlowAssetFromJSON(const FString& JsonString, EFlowAssetJSONSerializationMode Mode)
 {
 	TSharedPtr<FJsonObject> RootJson;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
@@ -1519,6 +1610,7 @@ UFlowAsset* UFlowAsset::FlowAssetFromJSON(const FString& JsonString)
 
 	// --- Deserialize Nodes ---
 	const TArray<TSharedPtr<FJsonValue>>* NodesArrayPtr;
+	TArray<UFlowNode*> NodeList;
 	TMap<FString, UFlowNode*> NameToNode;
 	if (RootJson->TryGetArrayField(TEXT("Nodes"), NodesArrayPtr))
 	{
@@ -1527,14 +1619,18 @@ UFlowAsset* UFlowAsset::FlowAssetFromJSON(const FString& JsonString)
 			const TSharedPtr<FJsonObject>* NodeJsonPtr;
 			if (NodeValue->TryGetObject(NodeJsonPtr))
 			{
-				UFlowNode* Node = DeserializeNode(*NodeJsonPtr, FlowAsset);
+				UFlowNode* Node = DeserializeNode(*NodeJsonPtr, FlowAsset, Mode);
 				if (!Node) continue;
 
 				FGuid NodeGuid = FGuid::NewGuid();
 				Node->SetGuid(NodeGuid);
 				FlowAsset->Nodes.Add(NodeGuid, Node);
 
-				NameToNode.Add(Node->GetName(), Node);
+				NodeList.Add(Node);
+				if (Mode == EFlowAssetJSONSerializationMode::Verbose)
+				{
+					NameToNode.Add(Node->GetName(), Node);
+				}
 			}
 		}
 	}
@@ -1543,51 +1639,124 @@ UFlowAsset* UFlowAsset::FlowAssetFromJSON(const FString& JsonString)
 	const TArray<TSharedPtr<FJsonValue>>* EdgesArrayPtr;
 	if (RootJson->TryGetArrayField(TEXT("Edges"), EdgesArrayPtr))
 	{
-		for (const TSharedPtr<FJsonValue>& EdgeValue : *EdgesArrayPtr)
+		if (Mode == EFlowAssetJSONSerializationMode::Minimal)
 		{
-			const TSharedPtr<FJsonObject>* EdgeObjPtr;
-			if (EdgeValue->TryGetObject(EdgeObjPtr))
+			// Build pin name maps for each node
+			TArray<TArray<FName>> NodeInputPinNames;
+			TArray<TArray<FName>> NodeOutputPinNames;
+			for (UFlowNode* Node : NodeList)
 			{
-				FString FromName, FromPin, ToName, ToPin;
-				(*EdgeObjPtr)->TryGetStringField(TEXT("From"), FromName);
-				(*EdgeObjPtr)->TryGetStringField(TEXT("FromPin"), FromPin);
-				(*EdgeObjPtr)->TryGetStringField(TEXT("To"), ToName);
-				(*EdgeObjPtr)->TryGetStringField(TEXT("ToPin"), ToPin);
-
-				UFlowNode* SourceNode = NameToNode.FindRef(FromName);
-				UFlowNode* TargetNode = NameToNode.FindRef(ToName);
-
-				if (SourceNode && TargetNode)
+				TArray<FName> InputPins, OutputPins;
+				for (const FFlowPin& Pin : Node->GetInputPins())
 				{
-					// Connect SourceNode's OutputPin to TargetNode's InputPin
-					FConnectedPin Conn(TargetNode->GetGuid(), FName(*ToPin));
-					FPinConnectionList& OutList = SourceNode->OutputConnections.FindOrAdd(FName(*FromPin));
-					OutList.Connections.Add(Conn);
+					InputPins.Add(Pin.PinName);
+				}
+				for (const FFlowPin& Pin : Node->GetOutputPins())
+				{
+					OutputPins.Add(Pin.PinName);
+				}
+				NodeInputPinNames.Add(InputPins);
+				NodeOutputPinNames.Add(OutputPins);
+			}
 
-					SourceNode->Modify();
+			for (const TSharedPtr<FJsonValue>& EdgeValue : *EdgesArrayPtr)
+			{
+				const TArray<TSharedPtr<FJsonValue>>* EdgeArrayPtr;
+				if (EdgeValue->TryGetArray(EdgeArrayPtr) && EdgeArrayPtr->Num() == 2)
+				{
+					FString SourceStr, TargetStr;
+					(*EdgeArrayPtr)[0]->TryGetString(SourceStr);
+					(*EdgeArrayPtr)[1]->TryGetString(TargetStr);
 
-					// Set input connection on target node
-					TargetNode->InputConnections.Add(FName(*ToPin), FConnectedPin(SourceNode->GetGuid(), FName(*FromPin)));
-					TargetNode->Modify();
+					int32 SourceNodeIdx = 0, SourcePinIdx = 0, TargetNodeIdx = 0, TargetPinIdx = 0;
+					{
+						TArray<FString> Parts;
+						SourceStr.ParseIntoArray(Parts, TEXT("."));
+						if (Parts.Num() == 2)
+						{
+							SourceNodeIdx = FCString::Atoi(*Parts[0]);
+							SourcePinIdx = FCString::Atoi(*Parts[1]);
+						}
+					}
+					{
+						TArray<FString> Parts;
+						TargetStr.ParseIntoArray(Parts, TEXT("."));
+						if (Parts.Num() == 2)
+						{
+							TargetNodeIdx = FCString::Atoi(*Parts[0]);
+							TargetPinIdx = FCString::Atoi(*Parts[1]);
+						}
+					}
+
+					if (NodeList.IsValidIndex(SourceNodeIdx) && NodeList.IsValidIndex(TargetNodeIdx) &&
+						NodeOutputPinNames[SourceNodeIdx].IsValidIndex(SourcePinIdx) &&
+						NodeInputPinNames[TargetNodeIdx].IsValidIndex(TargetPinIdx))
+					{
+						UFlowNode* SourceNode = NodeList[SourceNodeIdx];
+						UFlowNode* TargetNode = NodeList[TargetNodeIdx];
+						FName FromPin = NodeOutputPinNames[SourceNodeIdx][SourcePinIdx];
+						FName ToPin = NodeInputPinNames[TargetNodeIdx][TargetPinIdx];
+
+						// Connect SourceNode's OutputPin to TargetNode's InputPin
+						FConnectedPin Conn(TargetNode->GetGuid(), ToPin);
+						FPinConnectionList& OutList = SourceNode->OutputConnections.FindOrAdd(FromPin);
+						OutList.Connections.Add(Conn);
+
+						SourceNode->Modify();
+
+						// Set input connection on target node
+						TargetNode->InputConnections.Add(ToPin, FConnectedPin(SourceNode->GetGuid(), FromPin));
+						TargetNode->Modify();
+					}
+				}
+			}
+		}
+		else // Verbose
+		{
+			for (const TSharedPtr<FJsonValue>& EdgeValue : *EdgesArrayPtr)
+			{
+				const TSharedPtr<FJsonObject>* EdgeObjPtr;
+				if (EdgeValue->TryGetObject(EdgeObjPtr))
+				{
+					FString FromName, FromPin, ToName, ToPin;
+					(*EdgeObjPtr)->TryGetStringField(TEXT("From"), FromName);
+					(*EdgeObjPtr)->TryGetStringField(TEXT("FromPin"), FromPin);
+					(*EdgeObjPtr)->TryGetStringField(TEXT("To"), ToName);
+					(*EdgeObjPtr)->TryGetStringField(TEXT("ToPin"), ToPin);
+
+					UFlowNode* SourceNode = NameToNode.FindRef(FromName);
+					UFlowNode* TargetNode = NameToNode.FindRef(ToName);
+
+					if (SourceNode && TargetNode)
+					{
+						// Connect SourceNode's OutputPin to TargetNode's InputPin
+						FConnectedPin Conn(TargetNode->GetGuid(), FName(*ToPin));
+						FPinConnectionList& OutList = SourceNode->OutputConnections.FindOrAdd(FName(*FromPin));
+						OutList.Connections.Add(Conn);
+
+						SourceNode->Modify();
+
+						// Set input connection on target node
+						TargetNode->InputConnections.Add(FName(*ToPin), FConnectedPin(SourceNode->GetGuid(), FName(*FromPin)));
+						TargetNode->Modify();
+					}
 				}
 			}
 		}
 	}
 
-
 #if WITH_EDITOR
 	if (IFlowEditorModuleInterface* Extension = FModuleManager::Get().LoadModulePtr<IFlowEditorModuleInterface>(TEXT("FlowEditor")))
 	{
-		Extension->DeserializeEdGraphFromJSON(FlowAsset, RootJson);
+		Extension->DeserializeEdGraphFromJSON(FlowAsset, RootJson, Mode);
 	}
 #endif
 
-
 	FFlowMessageLog LogResults;
 	FlowAsset->ValidateAsset(LogResults);
-    for (const auto& Message : LogResults.Messages)
-    {
-    	UE_LOG(LogTemp, Warning, TEXT("%s"), *Message->ToText().ToString());
-    }
+	for (const auto& Message : LogResults.Messages)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *Message->ToText().ToString());
+	}
 	return FlowAsset;
 }
